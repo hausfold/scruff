@@ -613,10 +613,15 @@ Default backend is `none` + deterministic port/env allocation (§6). Containers 
 
 **One backend ships built in: `tart`.** `--backend tart` with no adapter file
 clones an image, boots the guest headless with the lane shared in, and waits
-for an address — `SCRUFF_TART_BASE` names the image, `SCRUFF_TART_USER` the account
-`enter` sshes in as. It is built in because its `setup` is three commands and a
-wait, which one argv slot cannot hold, so the file-only rule made every user
-write the same script before the verb worked at all. It changes nothing about
+for a shell to answer on the guest's address — an address alone is not enough,
+because `tart ip` answers on a DHCP lease, most of a minute before sshd does.
+`SCRUFF_TART_BASE` names the image, `SCRUFF_TART_USER` the account `enter` sshes
+in as, `SCRUFF_TART_SSH_WAIT` how many seconds the shell gets (180). The guest's
+console goes to a boot log under the state dir, never to the caller's stdout: a
+`tart run` lives as long as the guest, and one that inherits the caller's pipe
+holds it open until teardown. It is built in because its `setup` is four
+commands and two waits, which one argv slot cannot hold, so the file-only rule
+made every user write the same script before the verb worked at all. It changes nothing about
 the mechanism: a `tart.toml` on disk still wins, nothing is automatic, and
 `scruff runtime eject tart` prints the file to start from. It exists because an
 agent lane that has to *see* a desktop change work should take a disposable
