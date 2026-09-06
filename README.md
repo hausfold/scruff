@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🐈 scruff
+# scruff
 
 **the worktree-lifecycle substrate for parallel coding agents**
 
