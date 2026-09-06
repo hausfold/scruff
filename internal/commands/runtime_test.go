@@ -3,6 +3,7 @@ package commands
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hausfold/scruff/internal/exitcode"
 )
@@ -97,5 +98,57 @@ func TestRuntimeEject(t *testing.T) {
 	}
 	if toml := tartAdapterTOML(); !strings.Contains(toml, "--no-graphics") || !strings.Contains(toml, "{{.Name}}") {
 		t.Error("the ejected file must carry both the template vars and the flag that keeps the guest off the user's display")
+	}
+}
+
+// The ejected skeleton is the reference a hand-written adapter copies, so the
+// shape it shows is the shape the copies will have. hausfold/scruff#105 was an
+// adapter that copied a bare `tart run … &`: the guest kept the caller's
+// stdout for its whole life and `scruff runtime up … | tail` returned at
+// teardown. Every load-bearing piece of the dance has to be ON the line.
+func TestTartEjectShowsTheWholeDance(t *testing.T) {
+	toml := tartAdapterTOML()
+	for _, want := range []string{
+		`>"$log" 2>&1 </dev/null &`,    // the redirect, on the backgrounded line itself
+		"until ssh",                    // an address is not a shell
+		"BatchMode=yes",                // the probe can never stop for a password
+		"UserKnownHostsFile=/dev/null", // vmnet reuses addresses across clones
+		"disown",                       // named, because it is the thing people reach for instead
+	} {
+		if !strings.Contains(toml, want) {
+			t.Errorf("the ejected skeleton must show %q — a copy without it is the bug in #105 again", want)
+		}
+	}
+}
+
+// SCRUFF_TART_SSH_WAIT is read BEFORE the clone, so a bad value has to refuse
+// as usage rather than fall back to a default silently — silent is how a
+// typo'd `SCRUFF_TART_SSH_WAIT=30s` waits three minutes and nobody knows why.
+func TestTartSSHWait(t *testing.T) {
+	t.Setenv("SCRUFF_TART_SSH_WAIT", "")
+	if got, err := tartSSHWait(); err != nil || got != tartSSHWaitDefault {
+		t.Errorf("unset = %v, %v; want the default %v", got, err, tartSSHWaitDefault)
+	}
+	t.Setenv("SCRUFF_TART_SSH_WAIT", "45")
+	if got, err := tartSSHWait(); err != nil || got != 45*time.Second {
+		t.Errorf("45 = %v, %v; want 45s", got, err)
+	}
+	t.Setenv("SCRUFF_TART_SSH_WAIT", "0")
+	if got, err := tartSSHWait(); err != nil || got != 0 {
+		t.Errorf("0 = %v, %v; want 0 — one probe and then the verdict", got, err)
+	}
+	for _, bad := range []string{"30s", "-1", "soon"} {
+		t.Setenv("SCRUFF_TART_SSH_WAIT", bad)
+		_, err := tartSSHWait()
+		if err == nil {
+			t.Errorf("%q must refuse, not default", bad)
+			continue
+		}
+		if got := exitcode.Of(err); got != exitcode.Usage {
+			t.Errorf("%q: exit code = %d, want Usage (1); err = %v", bad, got, err)
+		}
+		if !strings.Contains(err.Error(), bad) {
+			t.Errorf("%q: the refusal must quote the value it refused, got %q", bad, err.Error())
+		}
 	}
 }

@@ -61,6 +61,7 @@ setup() {
   unset SCRUFF_AGENT HAUS_AGENT_DEFAULT # machine choices must not leak in
   unset SCRUFF_STATE SCRUFF_OCCUPANCY   # the lease dir and its sole-provider switch
   unset SCRUFF_TRILL                    # the notify tests shim trill on PATH
+  unset SCRUFF_TART_BASE SCRUFF_TART_USER SCRUFF_TART_SSH_WAIT # the runtime tests set their own
   export CLAUDE_WT_BASE="$TMP/wtbase"
   REG="$CLAUDE_WT_BASE/registry.tsv"
   mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
@@ -153,8 +154,46 @@ for c in ${FAKE_LSOF_CWDS:-}; do
 done
 EOF
 
-  chmod +x "$BIN/gh" "$BIN/lsof"
+  # ── shim: tart ─────────────────────────────────────────────────────────────
+  # The built-in runtime backend's dance, minus the VM: the clone is a log
+  # line, the guest is FAKE_TART_IP, `list` answers FAKE_TART_VMS. `run` is the
+  # one verb with a real shape to keep — the real `tart run` lives as long as
+  # the guest and holds every fd it inherited for that whole life, so the shim
+  # sleeps long enough (FAKE_TART_RUN_SECONDS) that a caller still waiting on
+  # its stdout is unmistakable. fd 3 up are bats's own and are closed first,
+  # or the suite itself would wait on the sleep — the same leak, one layer up.
+  cat >"$BIN/tart" <<'EOF'
+#!/usr/bin/env bash
+printf 'tart %s\n' "$*" >>"${FAKE_TART_LOG:-/dev/null}"
+case "$1" in
+  list) [ -z "${FAKE_TART_VMS:-}" ] || printf '%s\n' $FAKE_TART_VMS; exit 0 ;;
+  ip)   [ -n "${FAKE_TART_IP:-}" ] || exit 1; printf '%s\n' "$FAKE_TART_IP"; exit 0 ;;
+  run)  exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+        printf 'guest console: booting %s\n' "$2"
+        exec sleep "${FAKE_TART_RUN_SECONDS:-15}" ;;
+esac
+exit 0
+EOF
+
+  # ── shim: ssh ──────────────────────────────────────────────────────────────
+  # setup's readiness probe and `enter` both come through here. FAKE_SSH_REFUSE
+  # is how many connects a booting guest turns away before sshd is serving;
+  # the tally lives in a file because every probe is a fresh process.
+  cat >"$BIN/ssh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ssh %s\n' "$*" >>"${FAKE_SSH_LOG:-/dev/null}"
+n=0; [ -f "${FAKE_SSH_COUNT:-}" ] && n="$(cat "$FAKE_SSH_COUNT")"
+n=$((n + 1)); [ -z "${FAKE_SSH_COUNT:-}" ] || printf '%s' "$n" >"$FAKE_SSH_COUNT"
+if [ "$n" -le "${FAKE_SSH_REFUSE:-0}" ]; then
+  printf 'ssh: connect to host %s port 22: Connection refused\n' "${@: -2:1}" >&2
+  exit 255
+fi
+exit 0
+EOF
+
+  chmod +x "$BIN/gh" "$BIN/lsof" "$BIN/tart" "$BIN/ssh"
   export FAKE_GH_LOG="$TMP/gh.log"
+  export FAKE_TART_LOG="$TMP/tart.log" FAKE_SSH_LOG="$TMP/ssh.log" FAKE_SSH_COUNT="$TMP/ssh.count"
 
   # Last: stand somewhere harmless. bats starts every test in the checkout it
   # was launched from — the REAL scruff repo — so a test whose fixture path came
@@ -3572,4 +3611,108 @@ teardown() {
   wt_run skill --json
   [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
   [[ "$output" == *"14.5"* ]] || fail "a SPEC reader gets no hint it's reserved: $output"
+}
+
+# ── runtime: the built-in tart backend ───────────────────────────────────────
+# Black-box against the shim `tart` and `ssh`, so the dance runs with no VM in
+# it. What these pin is the two things #105 found the reference shape got
+# wrong: setup must return while the guest is still running, and the address
+# it prints must be one a shell has already answered on.
+
+tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup needs
+  local main; main="$(mkrepo alpha)"; hook_create "$main" "$1" >/dev/null
+  export SCRUFF_TART_BASE=golden FAKE_TART_IP=192.168.64.9
+}
+
+@test "runtime up tart: returns while the guest still runs — the guest never holds the caller's stdout" {
+  tart_lane vmlane
+  # `run` reads through a $( ), the shape every agent reads a command through.
+  # A `tart run` left holding scruff's stdout keeps this line blocked until the
+  # sleep ends (#105: "until the VM is torn down"); the bound is well under it.
+  local t0=$SECONDS
+  FAKE_TART_RUN_SECONDS=15 wt_run runtime up vmlane --backend tart
+  local took=$((SECONDS - t0))
+  [ "$status" -eq 0 ] || fail "want exit 0, got $status: $output"
+  [ "$took" -lt 8 ] || fail "setup took ${took}s — the backgrounded tart run still holds its stdout (#105)"
+  [[ "$output" == *"scruff-vmlane is up at 192.168.64.9"* ]] || fail "$output"
+  [[ "$output" == *"scruff runtime enter vmlane --backend tart"* ]] || fail "$output"
+  grep -q '^tart clone golden scruff-vmlane$' "$FAKE_TART_LOG" || fail "$(cat "$FAKE_TART_LOG")"
+  grep -q '^tart run scruff-vmlane --no-graphics --dir=work:' "$FAKE_TART_LOG" || fail "$(cat "$FAKE_TART_LOG")"
+  # The console went to the boot log under the state dir, never to the caller.
+  local log="$XDG_STATE_HOME/scruff/runtime/scruff-vmlane.log" deadline=$((SECONDS + 3))
+  until grep -q 'guest console' "$log" 2>/dev/null; do
+    [ "$SECONDS" -lt "$deadline" ] || fail "no boot log at $log"
+    sleep 0.1
+  done
+  [[ "$output" != *"guest console"* ]] || fail "the guest's console reached the caller: $output"
+}
+
+@test "runtime up tart: an address is not a shell — setup reports it only once sshd answered" {
+  tart_lane vmlane
+  export FAKE_SSH_REFUSE=2
+  wt_run runtime up vmlane --backend tart
+  [ "$status" -eq 0 ] || fail "want exit 0, got $status: $output"
+  [ "$(grep -c '^ssh ' "$FAKE_SSH_LOG")" -eq 3 ] || fail "want two refused probes and one answered: $(cat "$FAKE_SSH_LOG")"
+  [[ "$output" == *"waiting up to 180s for sshd on 192.168.64.9"* ]] || fail "the wait must say what it is waiting on: $output"
+  [[ "$output" == *"is up at 192.168.64.9"* ]] || fail "$output"
+  # The probe is the non-interactive form, and it never writes known_hosts:
+  # vmnet hands this same address to the next clone.
+  grep -q 'BatchMode=yes' "$FAKE_SSH_LOG" || fail "$(cat "$FAKE_SSH_LOG")"
+  grep -q 'UserKnownHostsFile=/dev/null' "$FAKE_SSH_LOG" || fail "$(cat "$FAKE_SSH_LOG")"
+  grep -q 'admin@192.168.64.9 true$' "$FAKE_SSH_LOG" || fail "$(cat "$FAKE_SSH_LOG")"
+}
+
+@test "runtime up tart: sshd never answering names the boot log and leaves the guest running to be looked at" {
+  tart_lane vmlane
+  export FAKE_SSH_REFUSE=99 SCRUFF_TART_SSH_WAIT=1
+  wt_run runtime up vmlane --backend tart
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" != *"is up at"* ]] || fail "it reported an address nothing answers on: $output"
+  [[ "$output" == *"sshd did not answer inside 1s"* ]] || fail "$output"
+  [[ "$output" == *"scruff/runtime/scruff-vmlane.log"* ]] || fail "the boot log is the only place the guest explains itself: $output"
+  [[ "$output" == *"Connection refused"* ]] || fail "the last probe's stderr is the only clue when an image wants a password: $output"
+  [[ "$output" == *"scruff runtime down vmlane --backend tart"* ]] || fail "$output"
+  # `down` is the verb, and its stop is the force `tart delete` lacks.
+  ! grep -q '^tart stop' "$FAKE_TART_LOG" || fail "the guest was stopped out from under whoever wants to look at it"
+  ! grep -q '^tart delete' "$FAKE_TART_LOG" || fail "the clone was deleted rather than left for down"
+}
+
+@test "runtime up tart: SCRUFF_TART_SSH_WAIT that is not a number refuses before the clone" {
+  tart_lane vmlane
+  export SCRUFF_TART_SSH_WAIT=30s
+  wt_run runtime up vmlane --backend tart
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" == *"SCRUFF_TART_SSH_WAIT"*"30s"* ]] || fail "$output"
+  ! grep -q '^tart clone' "$FAKE_TART_LOG" 2>/dev/null || fail "tens of GB were cloned before the knob was read"
+}
+
+@test "runtime up tart: no address inside the wait names the boot log, and never probes" {
+  tart_lane vmlane
+  export FAKE_TART_IP=""   # `tart ip --wait` runs out
+  wt_run runtime up vmlane --backend tart
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" == *"never got an address"* ]] || fail "$output"
+  [[ "$output" == *"scruff-vmlane.log"* ]] || fail "$output"
+  [[ "$output" == *"scruff runtime down vmlane --backend tart"* ]] || fail "$output"
+  ! grep -q '^ssh ' "$FAKE_SSH_LOG" 2>/dev/null || fail "probed an address it never had"
+}
+
+@test "runtime up tart: SCRUFF_TART_USER is who the probe sshes in as" {
+  tart_lane vmlane
+  export SCRUFF_TART_USER=ada
+  wt_run runtime up vmlane --backend tart
+  [ "$status" -eq 0 ] || fail "want exit 0, got $status: $output"
+  grep -q 'ada@192.168.64.9 true$' "$FAKE_SSH_LOG" || fail "$(cat "$FAKE_SSH_LOG")"
+}
+
+@test "runtime enter tart: a person's shell, and the guest stays out of known_hosts" {
+  tart_lane vmlane
+  wt_run runtime enter vmlane --backend tart
+  [ "$status" -eq 0 ] || fail "want exit 0, got $status: $output"
+  local line; line="$(grep '^ssh ' "$FAKE_SSH_LOG")"
+  [[ "$line" == *"UserKnownHostsFile=/dev/null"* ]] || fail "$line"
+  [[ "$line" == *"StrictHostKeyChecking=no"* ]] || fail "$line"
+  [[ "$line" == *" admin@192.168.64.9" ]] || fail "$line"
+  [[ "$line" != *"BatchMode"* ]] || fail "batch mode cannot ask a person for a password: $line"
+  [[ "$line" != *"ConnectTimeout"* ]] || fail "a five-second connect is not a person's patience: $line"
 }
