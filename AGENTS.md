@@ -148,9 +148,15 @@ the only reason a Go file lives outside `cmd/` and `internal/`: an embed pattern
 cannot escape its own package directory, and `ai/` is at the root because the
 family standard puts it there. `install` writes every skill it *discovers* —
 never just the tool's own — and never over a file that exists and differs or
-sits behind a symlink. Those are exit 2, the same "declined for safety" the rest
-of the CLI means by it, so a haus machine (where haus.ai.skill has already
-installed them as read-only store symlinks) refuses instead of failing on EPERM.
+sits behind a symlink. A file that differs, or one it cannot write, is exit 2,
+the same "declined for safety" the rest of the CLI means by it. A symlink is
+named and left alone but is **not** a refusal: on a haus machine haus.ai.skill
+has already installed every skill as a read-only store symlink, and that is the
+end state holding, so the run says so and exits 0 rather than sending every
+agent on such a machine back with force against a store path. `--dir` with
+`--client`, and either flag with a missing or empty value, are usage (exit 1)
+before anything is written. All three rules are A3 of the workshop's
+`docs/agent-surface.md`.
 
 `SPEC.md` §14.5 reserved this capability as `scruff docs agent
 [--format=md|json]` first. `skill` won — five tools in this family answer to it,

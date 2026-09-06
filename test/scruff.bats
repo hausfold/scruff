@@ -3481,11 +3481,29 @@ teardown() {
   ln -s "$TMP/elsewhere" "$TMP/skills/scruff"
 
   wt_run skill install --dir "$TMP/skills"
-  [ "$status" -eq 2 ] || fail "want exit 2 (refused), got $status: $output"
+  # Exit 0, not 2: the link is somebody else's install HOLDING, which is the
+  # end state this verb wants. A refusal here would have every agent on a
+  # normal haus machine — where every skill is such a link — report a broken
+  # command and retry with force against a store path.
+  [ "$status" -eq 0 ] || fail "want exit 0 (the end state holding), got $status: $output"
   [[ "$output" == *"symlink"* && "$output" == *"haus.ai.skill"* ]] || fail "$output"
   [ ! -e "$TMP/elsewhere/SKILL.md" ] || fail "it wrote through the symlink"
-  # The refusal is per-file: the skill that wasn't linked still landed.
-  grep -q "name: handoff" "$TMP/skills/handoff/SKILL.md" || fail "one refusal stopped the other write"
+  # Per-file: the skill that wasn't linked still landed.
+  grep -q "name: handoff" "$TMP/skills/handoff/SKILL.md" || fail "one skip stopped the other write"
+  [[ "$output" == *"1 managed elsewhere"* ]] || fail "the summary did not count the link apart from a refusal: $output"
+}
+
+@test "skill install: a run that finds only symlinks says so, and is not a failure" {
+  # The haus machine, whole: every skill is already a read-only symlink haus
+  # put there.
+  mkdir -p "$TMP/skills" "$TMP/store/scruff" "$TMP/store/handoff"
+  ln -s "$TMP/store/scruff" "$TMP/skills/scruff"
+  ln -s "$TMP/store/handoff" "$TMP/skills/handoff"
+  wt_run skill install --dir "$TMP/skills"
+  [ "$status" -eq 0 ] || fail "want exit 0, got $status: $output"
+  [[ "$output" == *"nothing to install"* ]] || fail "$output"
+  [[ "$output" == *"--dir"* ]] || fail "did not say how to place a copy elsewhere: $output"
+  [[ "$output" != *"0 written"* ]] || fail "a count of zero where a sentence was owed: $output"
 }
 
 @test "skill install: no client on the machine is usage, not a silent success" {
@@ -3522,6 +3540,24 @@ teardown() {
   wt_run skill install --dir "$unset_on_purpose"
   [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
   [ ! -e "$HOME/.claude/skills" ] || fail "it fell through to the real client directories"
+}
+
+@test "skill install: a flag with no value, or an empty one, is usage before anything is written" {
+  mkdir -p "$HOME/.claude" "$HOME/.codex"
+  wt_run skill install --dir
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" == *"--dir"* ]] || fail "$output"
+  wt_run skill install --client
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" == *"--client wants one of"* ]] || fail "$output"
+  # An empty --client, let through, reaches the table as `dirs[""]` and is
+  # refused as an "unknown client" — true, and not the sentence for what the
+  # caller did.
+  wt_run skill install --client ""
+  [ "$status" -eq 1 ] || fail "want exit 1, got $status: $output"
+  [[ "$output" == *"--client wants one of"* ]] || fail "$output"
+  [ ! -e "$HOME/.claude/skills" ] && [ ! -e "$HOME/.codex/skills" ] \
+    || fail "a valueless flag fell through to discovery"
 }
 
 @test "skill install: --dir and --client together name two destinations, so neither wins silently" {

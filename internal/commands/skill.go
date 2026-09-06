@@ -147,11 +147,18 @@ func (e *Env) Skill(args []string) error {
 // installs only its first reaches no standalone user with it, and scruff's
 // second (handoff) is the one teaching the thing that has no verb.
 //
-// It never clobbers. A file that is already there and DIFFERENT is somebody's
-// edit, and a file behind a symlink belongs to whatever manages that link —
-// on a haus machine, `haus.ai.skill` put it there and the target is read-only
-// anyway. Both are refusals, reported by name, and either one makes the whole
-// run exit 2 so a caller learns its request was only partly honoured.
+// It never clobbers, and the two ways it declines are different answers. A
+// file that is already there and DIFFERENT is somebody's edit, and a file
+// scruff cannot write is a directory somebody else owns: both are the caller's
+// request not honoured, reported by name, and either one makes the whole run
+// exit 2 (Refused) so the caller learns it was only partly honoured. A file
+// behind a SYMLINK belongs to whatever manages that link — on a haus machine,
+// `haus.ai.skill` put it there and the target is read-only anyway — and that
+// is the end state holding, not a refusal: it is named and left alone, and a
+// run that finds only symlinks says so and exits 0. A non-zero there would
+// have every agent on a normal haus machine report a broken command and retry
+// with more force, against a store path. The three rules are A3 of the
+// workshop's docs/agent-surface.md.
 func (e *Env) skillInstall(args []string, docs []skillDoc) error {
 	var dir, client string
 	for i := 0; i < len(args); i++ {
@@ -169,7 +176,10 @@ func (e *Env) skillInstall(args []string, docs []skillDoc) error {
 			}
 			dir, i = args[i+1], i+1
 		case "--client":
-			if i+1 >= len(args) {
+			// The same unset-variable trap as --dir. Let through, `dirs[""]`
+			// answers an empty value with "unknown client" — true, and the
+			// wrong sentence for what the caller did.
+			if i+1 >= len(args) || args[i+1] == "" {
 				return exitcode.Usagef("--client wants one of: %s", strings.Join(skillClientOrder, ", "))
 			}
 			client, i = args[i+1], i+1
@@ -215,7 +225,11 @@ func (e *Env) skillInstall(args []string, docs []skillDoc) error {
 		return exitcode.Usagef("no agent client found under %s — name one with --client, or a path with --dir", home)
 	}
 
-	wrote, same, left := 0, 0, 0
+	// `managed` is counted apart from `left` because the two are opposite
+	// answers wearing the same word: a symlink is the desired end state
+	// holding, a file that differs is the request not honoured, and only the
+	// second may reach the exit code.
+	wrote, same, managed, left := 0, 0, 0, 0
 	for _, target := range targets {
 		for _, d := range docs {
 			body, err := scruff.Skills.ReadFile(d.Path)
@@ -229,8 +243,8 @@ func (e *Env) skillInstall(args []string, docs []skillDoc) error {
 			// checking only the file would write through into the store — or,
 			// more likely, fail with EPERM and make the user work out why.
 			if isSymlink(filepath.Join(target, d.Name)) || isSymlink(dest) {
-				ui.Warn("left alone %s — a symlink, so something else manages it (on a haus machine, haus.ai.skill already did)", dest)
-				left++
+				ui.Say("left alone %s — a symlink, so something else manages it (on a haus machine, haus.ai.skill already did)", dest)
+				managed++
 				continue
 			}
 			if existing, err := os.ReadFile(dest); err == nil {
@@ -263,7 +277,15 @@ func (e *Env) skillInstall(args []string, docs []skillDoc) error {
 		}
 	}
 
-	ui.Say("skills: %d written, %d already current, %d left alone", wrote, same, left)
+	// The whole run was somebody else's install holding. Say that in a
+	// sentence rather than as a count of zero, and exit 0: nothing was asked
+	// for that does not already exist.
+	if wrote == 0 && same == 0 && left == 0 && managed > 0 {
+		ui.Say("nothing to install: every skill here is already a symlink something else manages (on a haus machine, haus.ai.skill)")
+		ui.Say("to place a copy somewhere nothing else manages: scruff skill install --dir <path>")
+		return nil
+	}
+	ui.Say("skills: %d written, %d already current, %d managed elsewhere, %d left alone", wrote, same, managed, left)
 	if left > 0 {
 		return exitcode.Refusedf("%d skill file(s) left alone — nothing was overwritten", left)
 	}
