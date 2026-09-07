@@ -20,7 +20,7 @@ The table below is only what's wired in *this* repo.
 | Path | Read by | What it actually is |
 |---|---|---|
 | `AGENTS.md` | Codex, OpenCode, Cursor, Zed, Amp, Copilot-in-editor, and anything else that speaks [agents.md](https://agents.md) | **The source of truth.** Every project rule. |
-| `CLAUDE.md` | Claude Code (CLI, desktop, web) | `@AGENTS.md` import + a table of Claude-only wiring. Claude Code reads only `CLAUDE.md`, so the import is how it gets the real file. |
+| `CLAUDE.md` | Claude Code (CLI, desktop, web) | `@AGENTS.md` import + a pointer to the Claude-only wiring mapped below. Claude Code reads only `CLAUDE.md`, so the import is how it gets the real file. |
 | `GEMINI.md` | Gemini CLI | Symlink → `AGENTS.md`. |
 | `opencode.json` | OpenCode | Names `AGENTS.md` explicitly. Belt and braces — OpenCode finds it anyway. |
 | `.github/copilot-instructions.md` | GitHub Copilot coding agent + code review | A **real file**, not a symlink: Copilot reads through the GitHub API, where a symlink is just a path string. Short pointer + the invariants a drive-by reviewer needs. |
