@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -43,6 +44,25 @@ type Config struct {
 	// default, and what every install had before this key existed — means an
 	// unnamed lane keeps taking a random word pair. See SPEC.md §5.6.
 	Namer string
+
+	// NameMax is the top-level `name_max = "45"` key: the longest lane KEY —
+	// `scruff/<repo>/<lane>`, the spelling askKey writes and the one a lane
+	// backend joins on — that this machine can carry, in bytes. 0, the
+	// default and what every install had before this key existed, is no cap.
+	//
+	// It is a number about the BACKEND, not about taste. haus renders that key
+	// as a zmx session name (`scruff.<repo>.<lane>`, the same length), and zmx
+	// puts its sockets in $TMPDIR, so the name has a hard ceiling set by how
+	// long that directory's path is: on macOS with a three-digit uid, 46 bytes.
+	// Past it the session cannot be created at all — the lane's window dies
+	// before the client starts, with an error only Ghostty ever shows. So the
+	// machine that knows the ceiling states it here, and scruff refuses a name
+	// it cannot carry at the moment the name is chosen, which is the only
+	// moment the name can still change.
+	//
+	// A string rather than a bare int because this parser reads strings; it is
+	// parsed as one and a value that isn't a number is warned about and dropped.
+	NameMax int
 
 	// Hooks maps a seam name to the argv scruff runs for it. Absent means "use
 	// the built-in", which is what an empty config gets and therefore what
@@ -358,6 +378,13 @@ func Load() (*Config, []string) {
 				cfg.Agent = argv[0]
 			case "namer":
 				cfg.Namer = argv[0]
+			case "name_max":
+				n, err := strconv.Atoi(argv[0])
+				if err != nil || n < 0 {
+					warnings = append(warnings, fmt.Sprintf("%s:%d — `name_max` wants a byte count like \"45\", not %q, so lane names are uncapped", path, line, argv[0]))
+					continue
+				}
+				cfg.NameMax = n
 			}
 		case "hooks":
 			cfg.Hooks[key] = argv

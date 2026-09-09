@@ -179,6 +179,8 @@ func (e *Env) New(want string, opts NewOpts) error {
 	// is evaluated either way — and this one is a process.
 	if want == "" {
 		want = e.nameForNewLane(main, opts.Prompt)
+	} else if err := e.refuseLongName(main, want); err != nil {
+		return err
 	}
 	name, dir, err := e.freeName(main, want)
 	if err != nil {
@@ -276,6 +278,8 @@ func (e *Env) Child(target, want string) error {
 		} else {
 			want = randomName()
 		}
+	} else if err := e.refuseLongName(main, want); err != nil {
+		return err
 	}
 
 	dir := filepath.Join(e.Base, e.bucketFor(main), want)
@@ -443,6 +447,8 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 	}
 	if want == "" {
 		want = e.nameForNewLane(main, opts.Prompt) // see New: a given name never asks
+	} else if err := e.refuseLongName(main, want); err != nil {
+		return err
 	}
 	name, dir, err := e.freeName(main, want)
 	if err != nil {
@@ -611,11 +617,71 @@ func sanitizeSlug(slug string) string {
 	return string(out)
 }
 
+// laneNameBudget is the longest lane NAME this repo can carry, in bytes, or 0
+// for "no cap" — `name_max` unset, which is every install whose lane backend
+// has no opinion about it.
+//
+// The config caps the whole KEY (`scruff/<repo>/<lane>`, the spelling askKey
+// writes and the one a backend joins on) rather than the name, because the repo
+// is half of what has to fit: the same name is comfortable in `nix` and over
+// the line in `homebrew-tap`. The budget is what the repo leaves over.
+//
+// A repo whose own name eats the whole cap gets 0. No name can help there, and
+// a lane nobody can name is worse than one that might not open; the backend's
+// own error is the backstop, and it is the one that knows the real number.
+func (e *Env) laneNameBudget(main string) int {
+	if e.Cfg == nil || e.Cfg.NameMax <= 0 {
+		return 0
+	}
+	n := e.Cfg.NameMax - len(askKeyPrefix) - len(filepath.Base(main)) - 1
+	if n < 3 {
+		return 0
+	}
+	return n
+}
+
+// refuseLongName rejects a name the caller TYPED that this machine cannot carry.
+//
+// Refused rather than quietly trimmed, and that asymmetry with fitName is the
+// point: a lane is a branch and a checkout as well as a session, so shortening
+// someone's name behind their back lands their work on a branch they did not
+// ask for and never sees them told. A name scruff chose is scruff's to trim.
+func (e *Env) refuseLongName(main, name string) error {
+	budget := e.laneNameBudget(main)
+	if budget == 0 || len(name) <= budget {
+		return nil
+	}
+	repo := filepath.Base(main)
+	return exitcode.Usagef("lane name '%s' is %d characters and %s can carry %d: this machine caps the lane key `%s%s/<lane>` at %d bytes (name_max), and the repo spends %d of them",
+		name, len(name), repo, budget, askKeyPrefix, repo, e.Cfg.NameMax, e.Cfg.NameMax-budget)
+}
+
+// fitName trims a name scruff CHOSE down to a budget, at a word boundary where
+// there is one inside it, so a budget of 23 turns
+// `docs-displays-expansion-slim` into `docs-displays-expansion` rather than
+// `docs-displays-expansion-` . A budget of 0 is no budget.
+func fitName(want string, budget int) string {
+	if budget <= 0 || len(want) <= budget {
+		return want
+	}
+	cut := want[:budget]
+	// Only fall back to the previous boundary when the budget lands INSIDE a
+	// word. Landing on the hyphen is already a clean break, and giving that one
+	// back would cost a whole word for nothing.
+	if want[budget] != '-' {
+		if i := strings.LastIndexByte(cut, '-'); i >= 3 {
+			cut = cut[:i]
+		}
+	}
+	return strings.Trim(cut, "-")
+}
+
 // freeName finds the first name near `want` with neither a checkout nor a branch
 // already using it, and returns it with its checkout path.
 func (e *Env) freeName(main, want string) (name, dir string, err error) {
 	bucket := e.bucketFor(main)
-	name = want
+	budget := e.laneNameBudget(main)
+	name = fitName(want, budget)
 	for n := 1; ; n++ {
 		dir = filepath.Join(e.Base, bucket, name)
 		_, statErr := os.Stat(dir)
@@ -625,7 +691,11 @@ func (e *Env) freeName(main, want string) (name, dir string, err error) {
 		if n > 99 {
 			return "", "", exitcode.Usagef("no free name near '%s' in %s", want, bucket)
 		}
-		name = want + "-" + strconv.Itoa(n+1)
+		// The suffix counts against the budget too — a name sitting exactly on
+		// it plus `-2` is over — so the base gives those characters back rather
+		// than the collision quietly producing a lane the backend cannot host.
+		suffix := "-" + strconv.Itoa(n+1)
+		name = fitName(want, budget-len(suffix)) + suffix
 	}
 }
 

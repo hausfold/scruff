@@ -3716,3 +3716,50 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   [[ "$line" != *"BatchMode"* ]] || fail "batch mode cannot ask a person for a password: $line"
   [[ "$line" != *"ConnectTimeout"* ]] || fail "a five-second connect is not a person's patience: $line"
 }
+
+# ── name_max (SPEC.md §5.7) ───────────────────────────────────────────────────
+# A lane name is also an identity the lane BACKEND has to hold, and a backend can
+# have a ceiling the filesystem does not. The cap is on the whole
+# `scruff/<repo>/<lane>` key, so what a name may be depends on the repo it is in.
+
+@test "name_max: a name the caller typed that the backend can't carry is refused, with the numbers" {
+  local main; main="$(mkrepo alpha)"          # scruff/alpha/<lane>: 13 + the name
+  setcfg 'name_max = "20"'                    # so: 7 characters for a lane here
+  cd "$main"; wt_run new sparkling-otter
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"sparkling-otter"* ]] || fail "the refusal must quote the name: $output"
+  [[ "$output" == *"7"* ]] || fail "the refusal must say how many characters are left: $output"
+  [[ "$output" == *alpha* ]] || fail "the refusal must name the repo whose budget it is: $output"
+  run git -C "$main" show-ref -q --verify refs/heads/worktree-sparkling-otter
+  [ "$status" -ne 0 ]                         # refused BEFORE the branch exists
+}
+
+@test "name_max: a name inside the budget is taken exactly as typed" {
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "20"'
+  cd "$main"; wt_run new otter
+  [ "$status" -eq 0 ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-otter
+}
+
+@test "name_max: no key is no cap — every install that came before it" {
+  local main; main="$(mkrepo alpha)"
+  cd "$main"; wt_run new a-very-long-lane-name-nobody-would-refuse
+  [ "$status" -eq 0 ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-a-very-long-lane-name-nobody-would-refuse
+}
+
+@test "name_max: a name scruff CHOSE is trimmed to a whole word, not refused" {
+  local main; main="$(mkrepo alpha)"
+  # 8 characters for a lane in alpha, which is under the shortest word pair
+  # randomName can produce (cozy-vole, 9) — so this always trims.
+  setcfg 'name_max = "21"'
+  cd "$main"
+  # No namer and no prompt: the random pair is a name scruff chose, so it is fit
+  # to the budget rather than turned into a usage error.
+  wt_run new
+  [ "$status" -eq 0 ] || fail "a chosen name must never fail the lane: $output"
+  local name; name="$(basename "$output")"
+  [ "${#name}" -le 8 ] || fail "the chosen name '$name' is over the 8-character budget"
+  [[ "$name" != *- ]] || fail "a trimmed name must not end on a hyphen: $name"
+}

@@ -229,3 +229,31 @@ func TestHookEnvSpeaksOneName(t *testing.T) {
 		}
 	}
 }
+
+// name_max is a byte count, spelled as a string because that is all this
+// parser reads. A value that is not one leaves lane names uncapped and says so
+// — the same "a typo must not stop a pane opening" rule the rest of Load keeps.
+func TestLoadNameMax(t *testing.T) {
+	cfg, warnings := load(t, "name_max = \"45\"\n")
+	if cfg.NameMax != 45 {
+		t.Fatalf("name_max = %d, want 45", cfg.NameMax)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a good name_max must be silent, got %v", warnings)
+	}
+
+	for _, bad := range []string{"forty-five", "-1"} {
+		cfg, warnings := load(t, "name_max = \""+bad+"\"\n")
+		if cfg.NameMax != 0 {
+			t.Fatalf("name_max = %q must leave the cap unset, got %d", bad, cfg.NameMax)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "name_max") {
+			t.Fatalf("name_max = %q must warn by name, got %v", bad, warnings)
+		}
+	}
+
+	cfg, _ = load(t, "agent = \"codex\"\n")
+	if cfg.NameMax != 0 {
+		t.Fatalf("no name_max is no cap, got %d", cfg.NameMax)
+	}
+}

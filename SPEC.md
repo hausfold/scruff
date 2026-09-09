@@ -673,6 +673,44 @@ worktree add` is rebuilt from scratch as one to three `[a-z0-9-]` words, and a
 candidate that is not already shaped like a name is rejected whole rather than
 cleaned up.
 
+### 5.7 `name_max` — a name the backend can carry
+
+A lane name is a branch and a directory, both of which take almost anything. It
+is also an identity a lane BACKEND has to hold, and a backend can have a ceiling
+the filesystem does not. haus renders the key scruff writes for a lane —
+`scruff/<repo>/<lane>` — as a zmx session name, and zmx names a unix socket after
+it, so on macOS the whole key has to fit in 46 bytes. Past that the session
+cannot be created, and the failure lands where nothing can act on it: the lane
+exists, its window dies before the client starts, and the only error is one the
+terminal emulator prints.
+
+The machine that knows its ceiling states it:
+
+```toml
+# ~/.config/scruff/config.toml
+name_max = "46"   # the longest `scruff/<repo>/<lane>` key this machine can hold
+```
+
+**Absent by default** — no key, no cap, exactly as every install behaved before
+it existed. The cap is on the whole key rather than on the name because the repo
+is half of what has to fit: 46 leaves 27 characters for a lane in `hausfold.co`
+and 35 for one in `nix`.
+
+It is enforced at the one moment the name can still change, which is when it is
+chosen, and the two halves are deliberately asymmetric:
+
+- A name **scruff chose** — a namer's answer, the random pair, the `-2` a
+  collision adds — is built to fit. The budget reaches `sanitizeName`, so the
+  namer stops on a whole word (`docs-displays-expansion`) instead of a name
+  being cut afterwards (`docs-displays-expansion-sl`).
+- A name the caller **typed** is refused, with the number it had, the number it
+  gets and where the rest went. Trimming it silently would put their work on a
+  branch they did not ask for and never tell them.
+
+A repo whose own name overruns the cap gets no budget rather than an impossible
+one: no name can help there, and a lane nobody can name is worse than one that
+might not open. The backend's own error is the backstop for that case.
+
 ---
 
 ## 6. Bootstrap & lifecycle hooks
@@ -944,6 +982,8 @@ must not be able to break.
 
 ```toml
 # ~/.config/scruff/config.toml
+name_max = "46"                                             # §5.7
+
 [hooks]
 resume   = "/nix/store/…-scruff-on-resume"                  # a bare program
 landed   = ["/nix/store/…-scruff-landed", "--release-train"] # or an argv
