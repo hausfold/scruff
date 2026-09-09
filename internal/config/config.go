@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -43,6 +44,27 @@ type Config struct {
 	// default, and what every install had before this key existed — means an
 	// unnamed lane keeps taking a random word pair. See SPEC.md §5.6.
 	Namer string
+
+	// NameMax is the top-level `name_max = "46"` key: the longest lane KEY —
+	// `scruff/<repo>/<lane>`, the spelling askKey writes and the one a lane
+	// backend joins on — that this machine can carry, in bytes. 0, the
+	// default and what every install had before this key existed, is no cap.
+	//
+	// It is a number about the BACKEND, not about taste. haus renders that key
+	// as a zmx session name (`scruff.<repo>.<lane>`, the same length), and zmx
+	// puts its sockets in $TMPDIR, so the name has a hard ceiling set by how
+	// long that directory's path is: on macOS with a three-digit uid, 46 bytes.
+	// Past it the session cannot be created at all — the lane's window dies
+	// before the client starts, with an error only Ghostty ever shows. So the
+	// machine that knows the ceiling states it here, and scruff refuses a name
+	// it cannot carry at the moment the name is chosen, which is the only
+	// moment the name can still change.
+	//
+	// Written as a quoted string because that is what this parser reads, and
+	// taken bare (`name_max = 46`) too, because that is what TOML says an
+	// integer looks like and a hand-written config will say it that way. A
+	// value that is not a number at all is warned about and dropped.
+	NameMax int
 
 	// Hooks maps a seam name to the argv scruff runs for it. Absent means "use
 	// the built-in", which is what an empty config gets and therefore what
@@ -346,6 +368,19 @@ func Load() (*Config, []string) {
 			continue
 		}
 		key = strings.TrimSpace(key)
+		// name_max is read before parseValue because it is the one key whose
+		// natural TOML spelling is a bare integer, which parseValue — strings
+		// and lists of strings, deliberately — would reject as unreadable.
+		if section == "" && key == "name_max" {
+			text := strings.Trim(strings.TrimSpace(raw), `"'`)
+			n, err := strconv.Atoi(text)
+			if err != nil || n < 0 {
+				warnings = append(warnings, fmt.Sprintf("%s:%d — `name_max` wants a byte count like 46, not %q, so lane names are uncapped", path, line, text))
+				continue
+			}
+			cfg.NameMax = n
+			continue
+		}
 		argv, ok := parseValue(strings.TrimSpace(raw))
 		if !ok || len(argv) == 0 {
 			warnings = append(warnings, fmt.Sprintf("%s:%d — couldn't read a string or a list of strings from %q, so `%s` is unset", path, line, strings.TrimSpace(raw), key))

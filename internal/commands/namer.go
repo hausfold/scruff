@@ -64,15 +64,31 @@ const (
 // question, "which existing lane is this cwd in?". One is a lookup, this is a
 // choice, and they are one letter apart in the wrong direction.
 func (e *Env) nameForNewLane(main, prompt string) string {
-	if name := e.nameFromPrompt(main, prompt); name != "" {
+	max := e.nameLenFor(main)
+	if name := e.nameFromPrompt(main, prompt, max); name != "" {
 		return name
 	}
-	return randomName()
+	return fitName(randomName(), max)
+}
+
+// nameLenFor is how long a name scruff CHOOSES may be here: its own shape rule,
+// tightened by what the machine's lane backend can carry (new.go's
+// laneNameBudget) when that is the smaller of the two.
+//
+// Building the name to fit is better than trimming one afterwards, which is why
+// the number goes all the way down to sanitizeName: a name assembled word by
+// word stops at `docs-displays-expansion`, while a cut one stops mid-word.
+func (e *Env) nameLenFor(main string) int {
+	max := namerMaxLen
+	if b := e.laneNameBudget(main); b > 0 && b < max {
+		max = b
+	}
+	return max
 }
 
 // nameFromPrompt asks the configured namer to name this task. "" means it
 // couldn't, for any reason at all, and the caller falls back.
-func (e *Env) nameFromPrompt(main, prompt string) string {
+func (e *Env) nameFromPrompt(main, prompt string, max int) string {
 	if e.Cfg == nil || e.Cfg.Namer == "" || strings.TrimSpace(prompt) == "" {
 		return ""
 	}
@@ -101,7 +117,7 @@ func (e *Env) nameFromPrompt(main, prompt string) string {
 		e.Warn(fmt.Sprintf("the %s namer (%s) %v — naming this lane at random instead", adapter.ID, argv[0], err))
 		return ""
 	}
-	name := slugFrom(out, own)
+	name := slugFrom(out, own, max)
 	if name == "" {
 		e.Warn(fmt.Sprintf("the %s namer answered with something that isn't a name — naming this lane at random instead", adapter.ID))
 		return ""
@@ -192,12 +208,12 @@ func namingRequest(repo, prompt string, taken []string) string {
 // wins; a preamble line can never become one, because a line with a colon,
 // a comma or five words in it is thrown away whole rather than sanitized into
 // `here-is-the`.
-func slugFrom(out string, own []string) string {
+func slugFrom(out string, own []string, max int) string {
 	for i, line := range strings.Split(out, "\n") {
 		if i >= 8 {
 			break // an answer this far down is prose about an answer
 		}
-		if name := sanitizeName(line, own); name != "" {
+		if name := sanitizeName(line, own, max); name != "" {
 			return name
 		}
 	}
@@ -205,7 +221,9 @@ func slugFrom(out string, own []string) string {
 }
 
 // sanitizeName turns one candidate line into a lane name, or "" if it isn't one.
-func sanitizeName(line string, own []string) string {
+// `max` is the longest name this repo can take — namerMaxLen, or less where the
+// machine's lane backend says so.
+func sanitizeName(line string, own []string, max int) string {
 	raw := strings.TrimSpace(line)
 	raw = strings.Trim(raw, "`\"'*.")
 	if raw == "" {
@@ -234,7 +252,7 @@ func sanitizeName(line string, own []string) string {
 		if name != "" {
 			next = name + "-" + w
 		}
-		if len(next) > namerMaxLen || strings.Count(next, "-") >= namerMaxWords {
+		if len(next) > max || strings.Count(next, "-") >= namerMaxWords {
 			break
 		}
 		name = next

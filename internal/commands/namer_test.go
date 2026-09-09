@@ -43,7 +43,7 @@ func TestSanitizeName(t *testing.T) {
 		{"ab", "", "too short to mean anything"},
 	}
 	for _, c := range cases {
-		if got := sanitizeName(c.in, own); got != c.want {
+		if got := sanitizeName(c.in, own, namerMaxLen); got != c.want {
 			t.Errorf("sanitizeName(%q) = %q, want %q — %s", c.in, got, c.want, c.why)
 		}
 	}
@@ -64,7 +64,7 @@ func TestSlugFromReadsPastChatter(t *testing.T) {
 		{strings.Repeat("Sure! Here is my reasoning, step by step:\n", 20) + "late-answer-here\n", ""},
 	}
 	for _, c := range cases {
-		if got := slugFrom(c.out, own); got != c.want {
+		if got := slugFrom(c.out, own, namerMaxLen); got != c.want {
 			t.Errorf("slugFrom(%q) = %q, want %q", c.out, got, c.want)
 		}
 	}
