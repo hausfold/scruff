@@ -112,11 +112,9 @@ worktree remove`.
 - "spawn an agent to do X" → `scruff spawn <repo> <name> --prompt-file <brief>`;
   the `handoff` skill is how you write the brief. Exit 3 means the lane exists
   but this machine has no `[hooks] open` to put a window on it — report the
-  command scruff printed, don't retry. **Keep the name short.** Some machines
-  cap it, because a lane backend has to carry `scruff/<repo>/<lane>` as one
-  string; a name over the budget is refused before the branch exists, and the
-  error says how many characters that repo leaves. Three or four
-  identity-carrying words is the shape either way.
+  command scruff printed, don't retry. **Keep `<name>` short**, three or four
+  identity-carrying words: some machines cap it (a backend carries
+  `scruff/<repo>/<lane>` as one string) and refuse a longer one outright.
 
 ## When NOT to
 

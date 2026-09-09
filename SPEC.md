@@ -692,24 +692,31 @@ name_max = "46"   # the longest `scruff/<repo>/<lane>` key this machine can hold
 ```
 
 **Absent by default** — no key, no cap, exactly as every install behaved before
-it existed. The cap is on the whole key rather than on the name because the repo
-is half of what has to fit: 46 leaves 27 characters for a lane in `hausfold.co`
-and 35 for one in `nix`.
+it existed. It is read quoted or bare (`name_max = 46`). The cap is on the whole
+key rather than on the name because the repo is half of what has to fit: 46
+leaves 27 bytes for a lane in `hausfold.co` and 35 for one in `nix`.
 
 It is enforced at the one moment the name can still change, which is when it is
 chosen, and the two halves are deliberately asymmetric:
 
-- A name **scruff chose** — a namer's answer, the random pair, the `-2` a
-  collision adds — is built to fit. The budget reaches `sanitizeName`, so the
-  namer stops on a whole word (`docs-displays-expansion`) instead of a name
-  being cut afterwards (`docs-displays-expansion-sl`).
+- A name **scruff chose** — a namer's answer, the random pair — is built to fit.
+  The budget reaches `sanitizeName`, so the namer stops on a whole word
+  (`docs-displays-expansion`) instead of a name being cut afterwards
+  (`docs-displays-expansion-sl`).
 - A name the caller **typed** is refused, with the number it had, the number it
   gets and where the rest went. Trimming it silently would put their work on a
   branch they did not ask for and never tell them.
+- The `-2` a collision adds counts against the budget too, and the same split
+  holds: a chosen base gives those bytes back, a typed one is refused instead.
+  Trimming there is the silent rename with the consequence hidden —
+  `fix-perch-drag-and-drop-lag` would land as `fix-perch-drag-and-drop-2`, one
+  suffix away from a different lane.
 
-A repo whose own name overruns the cap gets no budget rather than an impossible
-one: no name can help there, and a lane nobody can name is worse than one that
-might not open. The backend's own error is the backstop for that case.
+A repo leaving fewer than three bytes gets no budget rather than an impossible
+one: nothing scruff would call a name fits anyway, and a lane nobody can name is
+worse than one that might not open. The backend's own error is the backstop
+there, and for `scruff hook create`, where the CLIENT owns the name and has
+already made the branch — that path can only warn.
 
 ---
 

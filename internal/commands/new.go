@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/hausfold/scruff/internal/config"
 	"github.com/hausfold/scruff/internal/exitcode"
@@ -177,12 +178,14 @@ func (e *Env) New(want string, opts NewOpts) error {
 	// its task, and only when a namer is configured (see namer.go). Spelled as
 	// a branch rather than orDefault's second argument, because that argument
 	// is evaluated either way — and this one is a process.
+	given := true
 	if want == "" {
 		want = e.nameForNewLane(main, opts.Prompt)
+		given = false
 	} else if err := e.refuseLongName(main, want); err != nil {
 		return err
 	}
-	name, dir, err := e.freeName(main, want)
+	name, dir, err := e.freeName(main, want, given)
 	if err != nil {
 		return err
 	}
@@ -287,7 +290,7 @@ func (e *Env) Child(target, want string) error {
 	// caller never picked it, so a suffix costs them nothing. A name they TYPED
 	// is refused instead: silently working in `-2` is not what they asked for.
 	if derived {
-		free, freeDir, err := e.freeName(main, want)
+		free, freeDir, err := e.freeName(main, want, false)
 		if err != nil {
 			return err
 		}
@@ -445,12 +448,14 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 	if err != nil {
 		return err
 	}
+	given := true
 	if want == "" {
 		want = e.nameForNewLane(main, opts.Prompt) // see New: a given name never asks
+		given = false
 	} else if err := e.refuseLongName(main, want); err != nil {
 		return err
 	}
-	name, dir, err := e.freeName(main, want)
+	name, dir, err := e.freeName(main, want, given)
 	if err != nil {
 		return err
 	}
@@ -634,8 +639,8 @@ func (e *Env) laneNameBudget(main string) int {
 		return 0
 	}
 	n := e.Cfg.NameMax - len(askKeyPrefix) - len(filepath.Base(main)) - 1
-	if n < 3 {
-		return 0
+	if n < nameFloor {
+		return 0 // nothing scruff would call a name fits anyway
 	}
 	return n
 }
@@ -652,7 +657,7 @@ func (e *Env) refuseLongName(main, name string) error {
 		return nil
 	}
 	repo := filepath.Base(main)
-	return exitcode.Usagef("lane name '%s' is %d characters and %s can carry %d: this machine caps the lane key `%s%s/<lane>` at %d bytes (name_max), and the repo spends %d of them",
+	return exitcode.Usagef("lane name '%s' is %d bytes and %s can carry %d: this machine caps the lane key `%s%s/<lane>` at %d bytes (name_max), and the repo spends %d of them",
 		name, len(name), repo, budget, askKeyPrefix, repo, e.Cfg.NameMax, e.Cfg.NameMax-budget)
 }
 
@@ -660,28 +665,71 @@ func (e *Env) refuseLongName(main, name string) error {
 // there is one inside it, so a budget of 23 turns
 // `docs-displays-expansion-slim` into `docs-displays-expansion` rather than
 // `docs-displays-expansion-` . A budget of 0 is no budget.
+//
+// It never trims a name someone TYPED — refuseLongName answers that one, and
+// the asymmetry is the whole design (SPEC.md §5.7).
+//
+// The budget is in bytes because the ceiling it comes from is a socket path,
+// but the cut is on a rune boundary: a name scruff chose is ASCII by
+// construction (sanitizeName's plainWord), and a derived one — `scruff child`
+// inheriting its parent's lane name — is whatever a person once typed.
+// Slicing that mid-rune would put an invalid byte in a branch name.
 func fitName(want string, budget int) string {
 	if budget <= 0 || len(want) <= budget {
 		return want
 	}
 	cut := want[:budget]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1] // back off a partial rune
+	}
 	// Only fall back to the previous boundary when the budget lands INSIDE a
 	// word. Landing on the hyphen is already a clean break, and giving that one
 	// back would cost a whole word for nothing.
+	//
+	// `>= nameFloor` rather than `> 0`: a boundary in the first two bytes leaves
+	// a fragment, and sanitizeName rejects those for the same reason.
 	if want[budget] != '-' {
-		if i := strings.LastIndexByte(cut, '-'); i >= 3 {
+		if i := strings.LastIndexByte(cut, '-'); i >= nameFloor {
 			cut = cut[:i]
 		}
 	}
-	return strings.Trim(cut, "-")
+	cut = strings.Trim(cut, "-")
+	if cut == "" {
+		// Every boundary was in the first two bytes, or the name was hyphens.
+		// A lane still needs a name: `worktree--2` is not one.
+		cut = strings.Trim(want[:budget], "-")
+		for len(cut) > 0 && !utf8.ValidString(cut) {
+			cut = cut[:len(cut)-1]
+		}
+	}
+	return cut
 }
+
+// nameFloor is the shortest thing scruff will call a name — sanitizeName's own
+// rule (`len(name) < 3` is a fragment), applied everywhere a name is shortened
+// rather than built.
+const nameFloor = 3
 
 // freeName finds the first name near `want` with neither a checkout nor a branch
 // already using it, and returns it with its checkout path.
-func (e *Env) freeName(main, want string) (name, dir string, err error) {
+//
+// `given` says whose name this is, and it decides what happens when the budget
+// and a collision meet. The `-2` a collision adds counts against the budget
+// too, so a name sitting near it cannot take one:
+//
+//   - a name scruff CHOSE gives the bytes back off its own base, which is the
+//     same trimming it already accepted.
+//   - a name someone TYPED is refused instead. Trimming the base here would be
+//     the silent rename refuseLongName exists to prevent, and worse for being
+//     invisible: `fix-perch-drag-and-drop-lag` would land as
+//     `fix-perch-drag-and-drop-2`, a different lane's name one suffix away.
+func (e *Env) freeName(main, want string, given bool) (name, dir string, err error) {
 	bucket := e.bucketFor(main)
 	budget := e.laneNameBudget(main)
-	name = fitName(want, budget)
+	name = want
+	if !given {
+		name = fitName(want, budget)
+	}
 	for n := 1; ; n++ {
 		dir = filepath.Join(e.Base, bucket, name)
 		_, statErr := os.Stat(dir)
@@ -691,11 +739,28 @@ func (e *Env) freeName(main, want string) (name, dir string, err error) {
 		if n > 99 {
 			return "", "", exitcode.Usagef("no free name near '%s' in %s", want, bucket)
 		}
-		// The suffix counts against the budget too — a name sitting exactly on
-		// it plus `-2` is over — so the base gives those characters back rather
-		// than the collision quietly producing a lane the backend cannot host.
 		suffix := "-" + strconv.Itoa(n+1)
-		name = fitName(want, budget-len(suffix)) + suffix
+		if given {
+			if budget > 0 && len(want)+len(suffix) > budget {
+				return "", "", exitcode.Usagef("lane name '%s' is taken in %s, and '%s%s' is over what this machine can carry (%d bytes for a lane here) — pass a name of %d bytes or fewer",
+					want, bucket, want, suffix, budget, budget-len(suffix))
+			}
+			name = want + suffix
+			continue
+		}
+		base := budget - len(suffix)
+		if budget > 0 && base < 1 {
+			base = 1 // a budget this tight has no good answer; an ugly name beats an unopenable one
+		}
+		fitted := fitName(want, base)
+		if fitted == "" {
+			// Nothing of `want` survives the budget — an inherited name that is
+			// all separators, which `scruff child` can pick up from a branch a
+			// person made by hand. scruff chose this name, so scruff can choose
+			// another rather than open `worktree--2`.
+			fitted = fitName(randomName(), base)
+		}
+		name = fitted + suffix
 	}
 }
 

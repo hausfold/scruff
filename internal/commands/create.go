@@ -67,6 +67,17 @@ func (e *Env) HookCreate(stdin io.Reader) error {
 	if err != nil {
 		return exitcode.Usagef("%q isn't inside a git repo", base)
 	}
+	// The name is the CLIENT's — Claude Code has already made the branch and
+	// told us about it — so `name_max` (SPEC.md §5.7) can only warn here, not
+	// refuse. Worth warning: this is the one lane-creation path where a name
+	// over what the machine's lane backend can carry still gets through, and
+	// the failure it leads to says nothing at all (a window that closes on its
+	// own launch error). One line now beats that.
+	if budget := e.laneNameBudget(main); budget > 0 && len(name) > budget {
+		e.Warn(fmt.Sprintf("lane name %q is %d bytes and a lane in %s can carry %d — its window may not open (name_max); `scruff drop %s` and make it again with a shorter name",
+			name, len(name), filepath.Base(main), budget, name))
+	}
+
 	dir := filepath.Join(e.Base, filepath.Base(base), name)
 	if err := e.addWorktree(main, name, dir); err != nil {
 		return err

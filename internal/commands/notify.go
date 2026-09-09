@@ -275,7 +275,7 @@ func (e *Env) askKeyFor(payload map[string]any) (key, lane string) {
 // can change under it mid-session, and its basename is not unique anyway.
 //
 // ⚠️ This prefix is half of a JOIN, so it moves in step with haus or not at
-// all. haus's lane-seen.sh matches a zellij session named `scruff.<repo>.<lane>`
+// all. haus's lane-seen.sh matches a zmx session named `scruff.<repo>.<lane>`
 // against this key with the slashes flattened; the two spellings have to agree
 // or the bar quietly stops resolving anything.
 func askKey(lane string, payload map[string]any) string {

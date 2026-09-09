@@ -3749,9 +3749,9 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   git -C "$main" show-ref -q --verify refs/heads/worktree-a-very-long-lane-name-nobody-would-refuse
 }
 
-@test "name_max: a name scruff CHOSE is trimmed to a whole word, not refused" {
+@test "name_max: a name scruff CHOSE is fit to the budget, not refused" {
   local main; main="$(mkrepo alpha)"
-  # 8 characters for a lane in alpha, which is under the shortest word pair
+  # 8 bytes for a lane in alpha, which is under the shortest word pair
   # randomName can produce (cozy-vole, 9) — so this always trims.
   setcfg 'name_max = "21"'
   cd "$main"
@@ -3760,6 +3760,65 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   wt_run new
   [ "$status" -eq 0 ] || fail "a chosen name must never fail the lane: $output"
   local name; name="$(basename "$output")"
-  [ "${#name}" -le 8 ] || fail "the chosen name '$name' is over the 8-character budget"
+  [ "${#name}" -le 8 ] || fail "the chosen name '$name' is over the 8-byte budget"
   [[ "$name" != *- ]] || fail "a trimmed name must not end on a hyphen: $name"
+}
+
+@test "name_max: a DERIVED name is cut at a word boundary, not mid-word" {
+  # The word-boundary rule, on the one path where the base is known: a child
+  # lane inherits its parent's name, and `beta` is a longer repo than `alpha`
+  # so the same name has less room there. Cut naively this reads
+  # `docs-displays-expansion-s`; cut at the boundary it is a name.
+  local alpha beta lane; alpha="$(mkrepo alpha)"; beta="$(mkrepo beta-longer-name)"
+  lane="$(mkwt "$alpha" docs-displays-expansion-slim)"
+  setcfg 'name_max = "44"'                   # scruff/beta-longer-name/ spends 24 → 20 left
+  cd "$lane"; wt_run child "$beta"
+  [ "$status" -eq 0 ] || fail "a derived name must never fail the lane: $output"
+  local name; name="$(basename "$output")"
+  [ "$name" = docs-displays ] || fail "expected the whole-word cut docs-displays, got '$name'"
+}
+
+@test "name_max: spawn refuses a typed name the backend can't carry" {
+  # The path that produced the bug this exists for. `new` is tested above; this
+  # is the one an agent calls, and it has its own refusal site.
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "20"'
+  cd "$TMP"; wt_run spawn "$main" sparkling-otter
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"sparkling-otter"* ]]
+  run git -C "$main" show-ref -q --verify refs/heads/worktree-sparkling-otter
+  [ "$status" -ne 0 ]
+}
+
+@test "name_max: child refuses a typed name the backend can't carry" {
+  local alpha beta; alpha="$(mkrepo alpha)"; beta="$(mkrepo beta)"
+  setcfg 'name_max = "20"'
+  cd "$alpha"; wt_run child "$beta" sparkling-otter
+  [ "$status" -ne 0 ]
+  run git -C "$beta" show-ref -q --verify refs/heads/worktree-sparkling-otter
+  [ "$status" -ne 0 ]
+}
+
+@test "name_max: a collision never silently renames a name the caller typed" {
+  # `otter` fits (5 of 6) but `otter-2` does not, so the suffix cannot be paid
+  # for out of the base — that would land the lane on a branch nobody asked
+  # for. Refused, and the refusal says what will fit.
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "19"'                   # scruff/alpha/ spends 13 → 6 left
+  git -C "$main" branch worktree-otter
+  cd "$main"; wt_run new otter
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"taken"* ]] || fail "the refusal must say the name is taken: $output"
+  [[ "$output" == *"otter-2"* ]] || fail "the refusal must show the name it could not make: $output"
+  run git -C "$main" show-ref -q --verify refs/heads/worktree-otter-2
+  [ "$status" -ne 0 ]
+}
+
+@test "name_max: a collision that DOES fit still takes the suffix" {
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "20"'                   # 7 left: otter-2 is exactly 7
+  git -C "$main" branch worktree-otter
+  cd "$main"; wt_run new otter
+  [ "$status" -eq 0 ] || fail "otter-2 fits and must be made: $output"
+  git -C "$main" show-ref -q --verify refs/heads/worktree-otter-2
 }

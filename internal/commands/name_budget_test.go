@@ -3,6 +3,7 @@ package commands
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The budget is what the repo leaves over, because the key a backend carries is
@@ -95,5 +96,53 @@ func TestNamerBuildsToTheSmallerBudget(t *testing.T) {
 	}
 	if got := sanitizeName("docs displays expansion", nil, 22); got != "docs-displays" {
 		t.Fatalf("sanitizeName must stop on a whole word inside the budget, got %q", got)
+	}
+}
+
+// The collision suffix counts against the budget, and what happens then depends
+// on whose name it is. Trimming a TYPED base to make room would rename someone's
+// branch behind their back — the exact thing refuseLongName exists to stop, and
+// worse here for landing a byte away from a different lane's name.
+func TestFitNameNeverEatsAWordToMakeRoomForASuffix(t *testing.T) {
+	// A chosen name gives the bytes back off its own base.
+	if got := fitName("docs-displays-expansion", 21); got != "docs-displays" {
+		t.Errorf("a chosen base must shorten for its suffix, got %q", got)
+	}
+	// A budget tighter than the suffix still yields a name rather than "" — a
+	// lane still needs one, and `worktree--2` is not it.
+	for _, c := range []struct {
+		in     string
+		budget int
+	}{
+		{"docs-displays", 1}, {"ab-cd", 3}, {"a-b-c-d", 2},
+	} {
+		if got := fitName(c.in, c.budget); got == "" {
+			t.Errorf("fitName(%q, %d) = \"\" — a lane still needs a name", c.in, c.budget)
+		}
+	}
+	// The one input with nothing to keep. freeName answers it by choosing again
+	// rather than by asking fitName for something that isn't there.
+	if got := fitName("---", 2); got != "" {
+		t.Errorf("fitName(\"---\", 2) = %q, want the empty string freeName tests for", got)
+	}
+}
+
+// The budget is bytes because the ceiling is a socket path, but a cut lands on a
+// rune. A derived name — `scruff child` inheriting its parent's — is whatever a
+// person once typed, and half a rune in a branch name is not recoverable.
+func TestFitNameCutsOnARuneBoundary(t *testing.T) {
+	for _, c := range []struct {
+		in     string
+		budget int
+	}{
+		{"日本語のレーン", 7}, {"aöööööö", 4}, {"café-très-longue", 9},
+	} {
+		got := fitName(c.in, c.budget)
+		if !utf8.ValidString(got) {
+			t.Errorf("fitName(%q, %d) = %q — not valid UTF-8", c.in, c.budget, got)
+		}
+		if len(got) > c.budget {
+			t.Errorf("fitName(%q, %d) = %q, %d bytes — over budget", c.in, c.budget, got, len(got))
+		}
 	}
 }

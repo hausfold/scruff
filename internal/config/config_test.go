@@ -256,4 +256,15 @@ func TestLoadNameMax(t *testing.T) {
 	if cfg.NameMax != 0 {
 		t.Fatalf("no name_max is no cap, got %d", cfg.NameMax)
 	}
+
+	// The natural TOML spelling of a byte count is a bare integer, and a
+	// hand-written config will say it that way. parseValue reads strings and
+	// lists of strings only, so this key is read before it.
+	cfg, warnings = load(t, "name_max = 46\n")
+	if cfg.NameMax != 46 {
+		t.Fatalf("a bare integer name_max = %d, want 46", cfg.NameMax)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("a bare integer must be silent, got %v", warnings)
+	}
 }
