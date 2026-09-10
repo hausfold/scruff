@@ -3011,6 +3011,18 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
   [ ! -e "$TMP/ran" ] || fail "the namer ran for a lane with no prompt"
 }
 
+@test "namer: a name the caller DERIVED is still a name, and never asks either" {
+  # `--derived-name` changes which side of the ceiling the name lands on
+  # (SPEC.md §5.7), not whether it is a name — so the namer is not consulted for
+  # a lane that already has one, however the caller spelled it.
+  local b; b="$(mkrepo beta)"
+  mknamer 'touch "'"$TMP"'/ran"; echo mobile-nav-jitter'
+  setcfg 'namer = "fake"'
+  run bash -c "'$WT' spawn '$b' --derived-name notch-flicker --prompt 'fix the notch' 2>/dev/null"
+  [ "$output" = "$CLAUDE_WT_BASE/beta/notch-flicker" ] || fail "the namer overrode a derived name: $output"
+  [ ! -e "$TMP/ran" ] || fail "the namer ran for a lane that already had a name"
+}
+
 @test "namer: an answer that isn't a name warns and falls back — the lane is still made" {
   local b; b="$(mkrepo beta)"
   mknamer 'echo "I would need more detail about what you want changed."'
@@ -3863,4 +3875,69 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   cd "$main"; wt_run new otter
   [ "$status" -eq 0 ] || fail "otter-2 fits and must be made: $output"
   git -C "$main" show-ref -q --verify refs/heads/worktree-otter-2
+}
+
+# ── --derived-name (SPEC.md §5.7) ─────────────────────────────────────────────
+# The third case: a name the CALLER worked out from the task. It is a name, so
+# it wins over the namer — but nobody typed it, so it takes the chosen side of
+# the split above rather than being refused at a caller with nowhere to show a
+# refusal.
+
+@test "derived-name: fit to the budget, where the same name typed is refused" {
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "31"'                   # scruff/alpha/ spends 13 → 18 left
+  cd "$TMP"
+  wt_run spawn "$main" docs-displays-expansion          # 23 bytes, typed
+  [ "$status" -ne 0 ] || fail "a typed name over the budget is still refused: $output"
+
+  wt_run spawn "$main" --derived-name docs-displays-expansion
+  [ "$status" -eq 0 ] || fail "a derived name must be fit, never refused: $output"
+  [ "$(basename "$output")" = docs-displays ] \
+    || fail "expected the whole-word cut docs-displays, got '$(basename "$output")'"
+  git -C "$main" show-ref -q --verify refs/heads/worktree-docs-displays
+}
+
+@test "derived-name: a collision is paid for out of the base, not refused" {
+  # The `-2` counts against the same budget, and this is the half of §5.7 a
+  # caller must NOT reserve for itself: the bytes come off the base here, at the
+  # moment there is a collision to pay for.
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "31"'                   # 18 left
+  git -C "$main" branch worktree-docs-displays
+  cd "$TMP"; wt_run spawn "$main" --derived-name docs-displays-expansion
+  [ "$status" -eq 0 ] || fail "a derived name must never fail the lane: $output"
+  [ "$(basename "$output")" = docs-displays-2 ] \
+    || fail "expected docs-displays-2, got '$(basename "$output")'"
+}
+
+@test "derived-name: inside the budget it is taken whole, four words and all" {
+  # scruff shapes a name it composes itself (2-3 words, 24 bytes); a name handed
+  # to it is the caller's, and only the machine's ceiling may shorten it.
+  local main; main="$(mkrepo alpha)"
+  cd "$TMP"; wt_run spawn "$main" --derived-name look-palette-fallback-slug
+  [ "$status" -eq 0 ] || fail "$output"
+  [ "$(basename "$output")" = look-palette-fallback-slug ] \
+    || fail "a derived name inside the budget must not be reshaped: '$(basename "$output")'"
+}
+
+@test "derived-name: with a positional name it is a usage error, not a precedence rule" {
+  local main; main="$(mkrepo alpha)"
+  cd "$TMP"; wt_run spawn "$main" typed-name --derived-name derived-name
+  [ "$status" -eq 1 ] || fail "expected a usage error, got $status: $output"
+  [[ "$output" == *"both name the lane"* ]] \
+    || fail "the refusal must say the two spellings collide: $output"
+  [ "$(ls "$CLAUDE_WT_BASE/alpha" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+    || fail "nothing may be created on a usage error"
+}
+
+@test "derived-name: empty, or with nothing after it, is refused before anything is made" {
+  local main; main="$(mkrepo alpha)"
+  cd "$TMP"
+  wt_run spawn "$main" --derived-name ""
+  [ "$status" -eq 1 ] || fail "an empty derived name is the caller's variable being unset: $output"
+  [[ "$output" == *"--derived-name is empty"* ]] || fail "the refusal must name the flag: $output"
+  wt_run spawn "$main" --derived-name
+  [ "$status" -eq 1 ] || fail "a flag with no value is a usage error: $output"
+  [[ "$output" == *"needs the name you derived"* ]] || fail "the refusal must say what is missing: $output"
+  [ "$(reg_rows)" -eq 0 ] || fail "nothing may be registered on a usage error"
 }

@@ -31,6 +31,8 @@ A LANE is one agent's branch, checkout and pane, from create to reaped.
                           is opened through [hooks] open — exit 3 if none
                           <name> is optional with a --prompt: set namer = "<id>"
                           in the config and the task names the lane
+                          --derived-name <name> for a name YOU worked out from
+                          the task: fit to what this machine carries, not refused
   scruff park [label]       set the working tree aside as a wip: commit on this branch
   scruff unpark             put the last parked commit's changes back, uncommitted
   scruff reap               sweep every LANDED lane that nobody is standing in
@@ -295,15 +297,16 @@ func helpAsked(args []string) bool {
 // helpAsked reads it — each verb still parses its own flags — and it exists so
 // scanning for `--help` never mistakes a user's text for one of ours.
 var flagWantsValue = map[string]bool{
-	"--agent":       true,
-	"--backend":     true,
-	"--client":      true,
-	"--cmd":         true,
-	"--dir":         true,
-	"--image":       true,
-	"--pid":         true,
-	"--prompt":      true,
-	"--prompt-file": true,
+	"--agent":        true,
+	"--backend":      true,
+	"--client":       true,
+	"--cmd":          true,
+	"--derived-name": true,
+	"--dir":          true,
+	"--image":        true,
+	"--pid":          true,
+	"--prompt":       true,
+	"--prompt-file":  true,
 }
 
 // verbUsage is the usage block that documents one verb — the lines the person

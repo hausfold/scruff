@@ -110,11 +110,11 @@ worktree remove`.
 - "I lost a branch" → `scruff reaped` has the reason and the SHA to get it back
 - "start an agent on the other repo" → `scruff child <repo>` from this pane
 - "spawn an agent to do X" → `scruff spawn <repo> <name> --prompt-file <brief>`;
-  the `handoff` skill is how you write the brief. Exit 3 means the lane exists
-  but this machine has no `[hooks] open` to put a window on it — report the
-  command scruff printed, don't retry. **Keep `<name>` short**, three or four
-  identity-carrying words: some machines cap it (a backend carries
-  `scruff/<repo>/<lane>` as one string) and refuse a longer one outright.
+  the `handoff` skill writes the brief. Exit 3 means the lane exists but this
+  machine has no `[hooks] open` to put a window on it — report the command
+  scruff printed, don't retry. **A `<name>` you derived goes in
+  `--derived-name`**: machines that cap the key `scruff/<repo>/<lane>` refuse a
+  long positional name and cut a derived one. Three or four words either way.
 
 ## When NOT to
 
