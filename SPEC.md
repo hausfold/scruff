@@ -717,11 +717,25 @@ A third case sits between the two, and it is a flag rather than a guess:
 way your namer would have". It takes the CHOSEN side of the split — fit at a
 word boundary, and given the collision's bytes back off its own base — because
 nobody typed it, so there is nobody to refuse it to. The name is otherwise the
-caller's exactly as a positional one is: scruff does not rebuild it word by word
-the way §5.6 rebuilds a namer's answer, since that text came from a model and
-this came from argv. Both spellings at once is a usage error rather than a
-precedence rule; a caller holding both has a bug, and picking one silently hides
-it.
+caller's much as a positional one is: scruff does not rebuild it word by word the
+way §5.6 rebuilds a namer's answer, since that text came from a model and this
+came from argv.
+
+It is stricter in exactly one way, and only because a slugifier emits shapes a
+person never types. The first byte has to be alphanumeric — §5.6's `plainWord`
+rule, one door along. A value that is ALL separators (`tr -c 'a-z0-9' '-'` over
+a title in capitals) fits down to nothing, and an empty name is not a short name
+but the BUCKET: a lane on a `worktree-` branch that no verb can address, with
+every later lane in that repo created inside it and taken with it when it goes.
+A value starting `-` is a lane every later verb reads as a flag. Both are refused
+before the branch exists, which is the last moment a caller can still be told.
+
+Both spellings of the name at once is a usage error rather than a precedence
+rule; a caller holding both has a bug, and picking one silently hides it. The
+third POSITIONAL is not a second name, though: it is a client id, the spelling
+every shipped palette command uses, so it still reaches `--agent` beside a
+`--derived-name` — moving the slug off that slot is the whole migration this
+flag asks for, and it must not cost the caller its client.
 
 It is on `spawn` alone because that is the verb whose caller is a program.
 `new` and `child` have a pane and a person in front of them, where a refusal is

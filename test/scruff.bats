@@ -3941,3 +3941,83 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   [[ "$output" == *"needs the name you derived"* ]] || fail "the refusal must say what is missing: $output"
   [ "$(reg_rows)" -eq 0 ] || fail "nothing may be registered on a usage error"
 }
+
+# A `--derived-name` is the caller's, the way a positional one is — with one
+# exception, and these are it. A slugifier emits shapes a person never types,
+# and two of them make a lane no verb can address.
+
+@test "derived-name: a value that cannot start a name is refused, before the branch exists" {
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "46"'
+  cd "$TMP"
+  # `tr -c 'a-z0-9' '-'` over a title in capitals. fitName trims it to nothing,
+  # and an empty name is a lane at the BUCKET root on a `worktree-` branch —
+  # every later lane in alpha would then be created inside it.
+  wt_run spawn "$main" --derived-name -----------------------------------
+  [ "$status" -eq 1 ] || fail "an all-separator derived name must be refused: $output"
+  [[ "$output" == *"cannot start a lane name"* ]] || fail "$output"
+  [ ! -e "$CLAUDE_WT_BASE/alpha/.git" ] || fail "a lane was created at the bucket root"
+  run git -C "$main" show-ref -q --verify refs/heads/worktree-
+  [ "$status" -ne 0 ] || fail "a `worktree-` branch was made"
+
+  # And a leading hyphen, which every later verb reads as a flag.
+  wt_run spawn "$main" --derived-name -foo
+  [ "$status" -eq 1 ] || fail "a leading-hyphen derived name must be refused: $output"
+  [ ! -d "$CLAUDE_WT_BASE/alpha/-foo" ]
+}
+
+@test "derived-name: the third positional is still the client, in either order" {
+  # The shipped palette spelling is `scruff spawn <repo> <slug> <agent>`, so
+  # moving the slug to the flag must not turn the agent into a second name.
+  local main; main="$(mkrepo alpha)"
+  cd "$TMP"; wt_run spawn "$main" --derived-name fix-the-bar codex
+  [ "$status" -eq 0 ] || fail "the client positional was read as a name: $output"
+  cd "$TMP"; wt_run --json
+  [[ "$output" == *'"name": "fix-the-bar"'* ]] || fail "$output"
+  [[ "$output" == *'"agent": "codex"'* ]] || fail "the client went in as a name: $output"
+
+  cd "$TMP"; wt_run spawn "$main" opencode --derived-name other-bar
+  [ "$status" -eq 0 ] || fail "the flag after the client must resolve the same: $output"
+  [ "$(basename "$output")" = other-bar ]
+}
+
+@test "derived-name: a name someone TYPED beside it is still refused" {
+  local main; main="$(mkrepo alpha)"
+  cd "$TMP"; wt_run spawn "$main" typed-name --derived-name derived-name
+  [ "$status" -eq 1 ] || fail "$output"
+  [[ "$output" == *"both name the lane"* ]]
+}
+
+@test "derived-name: the --derived-name=<value> spelling means the same thing" {
+  local main; main="$(mkrepo alpha)"
+  setcfg 'name_max = "31"'                   # 18 left for a lane in alpha
+  cd "$TMP"; wt_run spawn "$main" --derived-name=docs-displays-expansion
+  [ "$status" -eq 0 ] || fail "$output"
+  [ "$(basename "$output")" = docs-displays ] || fail "$(basename "$output")"
+  cd "$TMP"; wt_run spawn "$main" --derived-name=
+  [ "$status" -eq 1 ] || fail "an empty =value is the same bug as an empty value: $output"
+}
+
+@test "derived-name: spawn alone takes it — new and child are for a person" {
+  local alpha beta; alpha="$(mkrepo alpha)"; beta="$(mkrepo beta)"
+  cd "$alpha"; wt_run new --derived-name whatever
+  [ "$status" -eq 1 ] || fail "new must not take it: $output"
+  cd "$alpha"; wt_run child "$beta" --derived-name whatever
+  [ "$status" -eq 1 ] || fail "child must not take it: $output"
+}
+
+@test "name_max: a name scruff chose that trims to NOTHING still gets a name" {
+  # Not reachable through --derived-name any more, but `scruff child` inherits
+  # whatever a person put on a branch by hand. The answer is another name, never
+  # the empty one: that is the bucket, and it takes the bucket's lanes with it.
+  local alpha beta lane; alpha="$(mkrepo alpha)"; beta="$(mkrepo beta)"
+  local hy=-------------------------------
+  lane="$(mkwt "$alpha" "$hy")"
+  setcfg 'name_max = "30"'
+  cd "$lane"; wt_run child "$beta"
+  [ "$status" -eq 0 ] || fail "a chosen name must never fail the lane: $output"
+  [ -n "$(basename "$output")" ] && [ "$(basename "$output")" != beta ] \
+    || fail "the lane landed on the bucket itself: $output"
+  run git -C "$beta" show-ref -q --verify refs/heads/worktree-
+  [ "$status" -ne 0 ] || fail "an empty lane name reached a branch"
+}

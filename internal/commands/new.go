@@ -434,7 +434,7 @@ func (e *Env) SpawnCmd(args []string) error {
 	return e.Spawn(target, want, opts)
 }
 
-// setDerived records `--derived-name`, refusing an empty one.
+// setDerived records `--derived-name`, refusing one that cannot become a name.
 //
 // Empty is the caller's variable being unset, never their intention — the same
 // reading, and the same answer, as the empty POSITIONAL above: refused before
@@ -443,9 +443,29 @@ func (e *Env) SpawnCmd(args []string) error {
 // "warn and fall back": that rule is about scruff's own naming failing (§5.6,
 // cosmetic, may never cost a lane), and an argument that isn't there is a bug
 // in the argv, which is what exit 1 is for.
+//
+// The first byte has to be alphanumeric — `plainWord`'s own rule (namer.go)
+// applied one door along, and the ONE way this flag is stricter than the
+// positional it stands in for. Both things it stops are things a slugifier
+// emits and a person never types:
+//
+//   - a value that is ALL separators. `tr -c 'a-z0-9' '-'` over a title in
+//     capitals gives 35 hyphens, which fitName trims away to nothing — and an
+//     empty name is a lane at the BUCKET root on a `worktree-` branch, which no
+//     verb can address and every later lane in that repo is then created
+//     inside.
+//   - a value starting `-`, which becomes a lane `scruff <name>` and `scruff
+//     drop <name>` both read as a flag: listed, and removable only with the
+//     `git worktree remove` scruff exists to keep you away from.
+//
+// A caller reaching either has a bug in its slugifier, and exit 1 before the
+// branch exists is where it can still be told.
 func setDerived(opts *SpawnOpts, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return exitcode.Usagef("--derived-name is empty — pass the name you derived, or leave it out and let --prompt name the lane")
+	}
+	if !alnum(rune(name[0])) {
+		return exitcode.Usagef("--derived-name %q cannot start a lane name — a name begins with a letter or a digit, and one that does not makes a lane no verb can address", name)
 	}
 	opts.Derived = name
 	return nil
@@ -464,12 +484,23 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 	if target == "" {
 		return exitcode.Usagef("usage: scruff spawn <repo-path> <name>")
 	}
-	// Two spellings of one argument, and a caller holding both has a bug: the
-	// positional is a name a PERSON typed, `--derived-name` one the CALLER
-	// worked out, and those are answered differently (§5.7). Picking a winner
-	// silently would hide the bug behind whichever rule it happened to pick.
+	// `scruff spawn <repo> --derived-name <name> <agent>` — the shipped palette
+	// spelling with its slug moved off the positional slot, which is the whole
+	// migration this flag asks a caller to make. The name slot is taken, so the
+	// third positional lands in `want`; give it the slot it was meant for
+	// rather than refusing the one caller this flag exists for. Resolved here
+	// rather than in the parser so it holds however the arguments are ordered.
+	if opts.Derived != "" && want != "" && opts.Agent == "" {
+		if _, ok := specFor(want); ok {
+			opts.Agent, want = want, ""
+		}
+	}
+	// Anything else holding both spellings has a bug: the positional is a name
+	// a PERSON typed, `--derived-name` one the CALLER worked out, and those are
+	// answered differently (§5.7). Picking a winner silently would hide the bug
+	// behind whichever rule it happened to pick.
 	if want != "" && opts.Derived != "" {
-		return exitcode.Usagef("a positional name and --derived-name both name the lane — pass one (a client id goes in --agent)")
+		return exitcode.Usagef("a positional name and --derived-name both name the lane — pass one (a client id is the exception: it still goes in the third slot, or in --agent)")
 	}
 	// The name stays required, with two exceptions: a spawn that carries a task
 	// has something to be named AFTER, so `scruff spawn <repo> --prompt …` may
@@ -786,6 +817,17 @@ func (e *Env) freeName(main, want string, given bool) (name, dir string, err err
 	name = want
 	if !given {
 		name = fitName(want, budget)
+		if name == "" {
+			// Nothing of `want` survived the budget — a name that is all
+			// separators past its first bytes. `--derived-name` refuses one
+			// outright (setDerived) and a namer's answer can never be one, but
+			// `scruff child` still inherits whatever a person put on a branch
+			// by hand, and the collision loop below already answers this case.
+			// An empty name is not a name: it is the BUCKET, and a later lane
+			// made inside it goes with this one when it is removed
+			// (invariant 1).
+			name = fitName(randomName(), budget)
+		}
 	}
 	for n := 1; ; n++ {
 		dir = filepath.Join(e.Base, bucket, name)

@@ -33,7 +33,7 @@ system, the package manager or which agent is running.
 | …and open an agent in it | `scruff new [name] --open [agent]` |
 | …opened on a task, not a blank pane | `--prompt '<task>'`, or `--prompt-file <file>` |
 | a lane on *another* repo | `scruff child <repo>` |
-| a lane on any repo, with a task, from a spawner with no pane | `scruff spawn <repo> <name> --prompt-file <file>` |
+| a lane on any repo, with a task, from a spawner with no pane | `scruff spawn <repo> --derived-name <name> --prompt-file <file>` |
 | set the tree aside | `scruff park [label]` — the tree you are STANDING in; the argument is a label, never a lane |
 | put it back | `scruff unpark` |
 | sweep landed lanes | `scruff reap` |
@@ -109,12 +109,12 @@ worktree remove`.
 - "clean up the merged ones" → `scruff reap`, then `scruff reaped` to show what went
 - "I lost a branch" → `scruff reaped` has the reason and the SHA to get it back
 - "start an agent on the other repo" → `scruff child <repo>` from this pane
-- "spawn an agent to do X" → `scruff spawn <repo> <name> --prompt-file <brief>`;
-  the `handoff` skill writes the brief. Exit 3 means the lane exists but this
-  machine has no `[hooks] open` to put a window on it — report the command
-  scruff printed, don't retry. **A `<name>` you derived goes in
-  `--derived-name`**: machines that cap the key `scruff/<repo>/<lane>` refuse a
-  long positional name and cut a derived one. Three or four words either way.
+- "spawn an agent to do X" → `scruff spawn <repo> --derived-name <name>
+  --prompt-file <brief>`; the `handoff` skill writes the brief. Exit 3 means the
+  lane exists but this machine has no `[hooks] open` — report the command scruff
+  printed, don't retry. **`--derived-name`, never the positional name**: you
+  derived it, so a machine that caps the key `scruff/<repo>/<lane>` cuts it to
+  fit rather than refusing it. Three or four words, starting on a letter.
 
 ## When NOT to
 
