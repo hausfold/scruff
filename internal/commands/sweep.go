@@ -168,6 +168,18 @@ func occupiedNote(entry Entry, held []occupancy.Holder) string {
 // which makes the branch unlanded and moves the lane from this refusal to the
 // next one. The two real ways out are commit it or clean it.
 func dirtyNote(entry Entry, porcelain string) string {
+	return entry.Name() + " (" + filepath.Base(entry.Main) + ")" +
+		" — uncommitted work in the checkout: " + dirtyPaths(porcelain) +
+		". Nothing is reaped over that; commit it or clean it, then reap again: " + entry.Path
+}
+
+// dirtyPaths names what is actually uncommitted, capped at dirtyPathsShown.
+//
+// Shared with `drop`'s refusal for the same reason the occupancy refusal names
+// its processes: "has uncommitted changes" about a checkout you are not
+// standing in is unanswerable. Two stray screenshots and a half-written
+// migration want opposite decisions, and from here you can see neither.
+func dirtyPaths(porcelain string) string {
 	lines := strings.Split(strings.TrimRight(porcelain, "\n"), "\n")
 	shown := lines
 	if len(shown) > dirtyPathsShown {
@@ -177,13 +189,11 @@ func dirtyNote(entry Entry, porcelain string) string {
 	for _, l := range shown {
 		paths = append(paths, porcelainPath(l))
 	}
-	more := ""
+	out := strings.Join(paths, ", ")
 	if len(lines) > len(shown) {
-		more = ", +" + itoa(len(lines)-len(shown)) + " more"
+		out += ", +" + itoa(len(lines)-len(shown)) + " more"
 	}
-	return entry.Name() + " (" + filepath.Base(entry.Main) + ")" +
-		" — uncommitted work in the checkout: " + strings.Join(paths, ", ") + more +
-		". Nothing is reaped over that; commit it or clean it, then reap again: " + entry.Path
+	return out
 }
 
 // dirtyPathsShown caps the named paths, so a checkout with a build tree in it
