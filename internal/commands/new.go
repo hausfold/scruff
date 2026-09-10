@@ -321,16 +321,23 @@ func (e *Env) Child(target, want string) error {
 	return nil
 }
 
-// SpawnOpts is how `scruff spawn` was asked to finish. Same two fields as
-// NewOpts' prompt half, and they mean the same thing — see there.
+// SpawnOpts is how `scruff spawn` was asked to finish. The prompt half is
+// NewOpts', and it means the same thing — see there.
 type SpawnOpts struct {
 	Agent  string
 	Prompt string
 	Image  string
+	// Derived is a name the CALLER worked out from the task, `--derived-name`.
+	// It is the lane's name exactly as a positional one is; the only thing it
+	// changes is which side of SPEC.md §5.7 the name lands on — fit to what
+	// this machine can carry, the way scruff fits a name it chose itself,
+	// rather than refused the way it refuses one a person typed. Nobody typed
+	// this one, so there is nobody to refuse it to.
+	Derived string
 }
 
 // SpawnCmd parses `scruff spawn <repo> <name> [agent] [--agent id]
-// [--prompt TEXT | --prompt-file FILE] [--image FILE]`.
+// [--prompt TEXT | --prompt-file FILE] [--image FILE] [--derived-name NAME]`.
 //
 // The third POSITIONAL is still an agent id: that is the spelling every shipped
 // palette command uses (`scruff spawn "$repo" "$slug" "$agent"`), and it predates
@@ -371,6 +378,14 @@ func (e *Env) SpawnCmd(args []string) error {
 			}
 			i++
 			opts.Image = args[i]
+		case "--derived-name":
+			if i+1 >= len(args) {
+				return exitcode.Usagef("--derived-name needs the name you derived")
+			}
+			i++
+			if err := setDerived(&opts, args[i]); err != nil {
+				return err
+			}
 		default:
 			switch {
 			case strings.HasPrefix(a, "--agent="):
@@ -388,6 +403,10 @@ func (e *Env) SpawnCmd(args []string) error {
 				opts.Prompt = text
 			case strings.HasPrefix(a, "--image="):
 				opts.Image = a[len("--image="):]
+			case strings.HasPrefix(a, "--derived-name="):
+				if err := setDerived(&opts, a[len("--derived-name="):]); err != nil {
+					return err
+				}
 			case strings.HasPrefix(a, "-"):
 				return exitcode.Usagef("unknown flag %q — try `scruff --help`", a)
 			case a == "":
@@ -403,7 +422,7 @@ func (e *Env) SpawnCmd(args []string) error {
 			case opts.Agent == "":
 				opts.Agent = a
 			default:
-				return exitcode.Usagef("usage: scruff spawn <repo> <name> [--prompt '<task>' | --prompt-file <file>]")
+				return exitcode.Usagef("usage: scruff spawn <repo> <name> [--prompt '<task>' | --prompt-file <file>] [--derived-name <name>]")
 			}
 		}
 	}
@@ -413,6 +432,23 @@ func (e *Env) SpawnCmd(args []string) error {
 		return exitcode.Usagef("--image needs a --prompt/--prompt-file — it is what the first turn is told to look at")
 	}
 	return e.Spawn(target, want, opts)
+}
+
+// setDerived records `--derived-name`, refusing an empty one.
+//
+// Empty is the caller's variable being unset, never their intention — the same
+// reading, and the same answer, as the empty POSITIONAL above: refused before
+// anything is created, so a launcher whose slug went missing is told rather
+// than quietly given a lane named after nothing. Deliberately not the namer's
+// "warn and fall back": that rule is about scruff's own naming failing (§5.6,
+// cosmetic, may never cost a lane), and an argument that isn't there is a bug
+// in the argv, which is what exit 1 is for.
+func setDerived(opts *SpawnOpts, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return exitcode.Usagef("--derived-name is empty — pass the name you derived, or leave it out and let --prompt name the lane")
+	}
+	opts.Derived = name
+	return nil
 }
 
 // Spawn opens a NAMED lane for a spawner that has no pane of its own.
@@ -428,12 +464,20 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 	if target == "" {
 		return exitcode.Usagef("usage: scruff spawn <repo-path> <name>")
 	}
-	// The name stays required, with one exception: a spawn that carries a task
+	// Two spellings of one argument, and a caller holding both has a bug: the
+	// positional is a name a PERSON typed, `--derived-name` one the CALLER
+	// worked out, and those are answered differently (§5.7). Picking a winner
+	// silently would hide the bug behind whichever rule it happened to pick.
+	if want != "" && opts.Derived != "" {
+		return exitcode.Usagef("a positional name and --derived-name both name the lane — pass one (a client id goes in --agent)")
+	}
+	// The name stays required, with two exceptions: a spawn that carries a task
 	// has something to be named AFTER, so `scruff spawn <repo> --prompt …` may
-	// leave it out and let the namer (or a random pair) fill it in. Without a
-	// task there is nothing to derive from, and a nameless spawn is still the
-	// caller forgetting an argument.
-	if want == "" && opts.Prompt == "" {
+	// leave it out and let the namer (or a random pair) fill it in, and
+	// `--derived-name` is the name arriving by another door. Without either
+	// there is nothing to derive from, and a nameless spawn is still the caller
+	// forgetting an argument.
+	if want == "" && opts.Derived == "" && opts.Prompt == "" {
 		return exitcode.Usagef("usage: scruff spawn <repo-path> <name>")
 	}
 	agentID := orDefault(opts.Agent, e.Agent)
@@ -448,12 +492,23 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 	if err != nil {
 		return err
 	}
+	// `given` is the §5.7 split, and `--derived-name` is the third way to
+	// reach it: a name the caller derived takes the CHOSEN side, so it is fit
+	// to the budget rather than refused, and freeName pays for a collision
+	// suffix out of the base rather than turning it into an error. A name that
+	// still wins over the namer, because it is a name — the namer is only ever
+	// asked for a lane that has none.
 	given := true
-	if want == "" {
+	switch {
+	case opts.Derived != "":
+		want, given = opts.Derived, false
+	case want == "":
 		want = e.nameForNewLane(main, opts.Prompt) // see New: a given name never asks
 		given = false
-	} else if err := e.refuseLongName(main, want); err != nil {
-		return err
+	default:
+		if err := e.refuseLongName(main, want); err != nil {
+			return err
+		}
 	}
 	name, dir, err := e.freeName(main, want, given)
 	if err != nil {
@@ -672,7 +727,8 @@ func (e *Env) refuseLongName(main, name string) error {
 // The budget is in bytes because the ceiling it comes from is a socket path,
 // but the cut is on a rune boundary: a name scruff chose is ASCII by
 // construction (sanitizeName's plainWord), and a derived one — `scruff child`
-// inheriting its parent's lane name — is whatever a person once typed.
+// inheriting its parent's lane name, `scruff spawn --derived-name` carrying a
+// caller's own — is whatever a person once typed or a script once built.
 // Slicing that mid-rune would put an invalid byte in a branch name.
 func fitName(want string, budget int) string {
 	if budget <= 0 || len(want) <= budget {
@@ -717,7 +773,8 @@ const nameFloor = 3
 // and a collision meet. The `-2` a collision adds counts against the budget
 // too, so a name sitting near it cannot take one:
 //
-//   - a name scruff CHOSE gives the bytes back off its own base, which is the
+//   - a name scruff CHOSE — or one a caller derived and handed over with
+//     `--derived-name` — gives the bytes back off its own base, which is the
 //     same trimming it already accepted.
 //   - a name someone TYPED is refused instead. Trimming the base here would be
 //     the silent rename refuseLongName exists to prevent, and worse for being

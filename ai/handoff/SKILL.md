@@ -54,15 +54,15 @@ the ready-made lane command underneath.
 # The MAIN checkout, never this worktree: `--git-common-dir` resolves to it
 # from inside a lane too.
 repo="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-scruff spawn "$repo" <name> --prompt-file <that file>
+scruff spawn "$repo" --derived-name <name> --prompt-file <that file>
 ```
 
 - **`<name>` comes from the objective, not its first words.** Three or four
   identity-carrying words, kebab-case — `bar-pill-flickers`, not
-  `look-into-why-the`; scruff suffixes a taken name, and refuses one over a
-  machine's cap on the key `scruff/<repo>/<lane>` instead of trimming it, so a
-  refusal wants a word fewer and costs nothing. Omit it only where the machine
-  sets `namer` — you wrote the brief, so you are the better namer.
+  `look-into-why-the`; scruff suffixes a taken name. `--derived-name`, not a
+  positional one, because you derived it: a machine that caps the key
+  `scruff/<repo>/<lane>` cuts a derived name to fit and refuses a typed one.
+  Omit it only where the machine sets `namer` — you wrote the brief.
 - **`--prompt-file`, never `--prompt "$(cat …)"`.** A brief is multi-line and
   routinely holds quotes, backticks and `$`; the file form never crosses a shell.
 - **Another repo?** Pass its main checkout as `repo`, which is why the path is

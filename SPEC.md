@@ -712,6 +712,33 @@ chosen, and the two halves are deliberately asymmetric:
   `fix-perch-drag-and-drop-lag` would land as `fix-perch-drag-and-drop-2`, one
   suffix away from a different lane.
 
+A third case sits between the two, and it is a flag rather than a guess:
+`scruff spawn --derived-name <name>` says "I worked this out from the task, the
+way your namer would have". It takes the CHOSEN side of the split — fit at a
+word boundary, and given the collision's bytes back off its own base — because
+nobody typed it, so there is nobody to refuse it to. The name is otherwise the
+caller's exactly as a positional one is: scruff does not rebuild it word by word
+the way §5.6 rebuilds a namer's answer, since that text came from a model and
+this came from argv. Both spellings at once is a usage error rather than a
+precedence rule; a caller holding both has a bug, and picking one silently hides
+it.
+
+It is on `spawn` alone because that is the verb whose caller is a program.
+`new` and `child` have a pane and a person in front of them, where a refusal is
+read and answered with a shorter name. A launcher deriving a name from the task
+has one shot at it and can show a refusal nowhere — it lands in a log behind a
+toast, with no lane, no branch and no window — so without this flag it
+reimplements the arithmetic above in its own language: the config read, the
+repo subtraction, the floor, the word-boundary cut, every one of them a place
+for the two copies to disagree about the same machine.
+
+The `-2` reserve does not travel with the name. A caller fitting a name itself
+has to hold two bytes back for a collision suffix it could not otherwise pay
+for, and it holds them back on every spawn, including the ones that collide with
+nothing. `freeName`'s chosen path takes those bytes off the base at the moment
+it knows there IS a collision, so a `--derived-name` is passed whole and keeps
+them.
+
 A repo leaving fewer than three bytes gets no budget rather than an impossible
 one: nothing scruff would call a name fits anyway, and a lane nobody can name is
 worse than one that might not open. The backend's own error is the backstop
