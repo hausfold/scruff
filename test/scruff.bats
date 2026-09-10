@@ -328,6 +328,43 @@ fail() { printf '%s\n' "$*" >&2; return 1; }   # not a bats builtin
   [ "$(git -C "$dir" rev-parse HEAD)" = "$head" ]
 }
 
+# The reported loop, end to end: `scruff drop <lane>` refuses a dirty lane and
+# says to park it, so the next thing typed is `scruff park <that lane>` — from
+# whatever pane read the refusal. Park works on the checkout you are standing in,
+# so that used to report "nothing to park — main is already clean" and exit 0,
+# about a repo nobody asked about, leaving the lane exactly as dirty as before.
+@test "park: a label that names another lane is refused, not a silent no-op" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" faraway)"
+  echo scratch >"$dir/uncommitted.txt"
+  local head; head="$(git -C "$main" rev-parse HEAD)"
+  cd "$main"; wt_run park faraway
+  [ "$status" -eq 2 ] || fail "expected a refusal (exit 2), got $status: $output"
+  [[ "$output" == *"is a lane"* ]] || fail "the refusal never says the label was a lane: $output"
+  [[ "$output" == *"$dir"* ]] || fail "the refusal points at no checkout to park in: $output"
+  [ "$(git -C "$main" rev-parse HEAD)" = "$head" ] || fail "a refused park still committed"
+  [ -f "$dir/uncommitted.txt" ] || fail "the lane's dirt moved"
+}
+
+# Dirty is the case where the park is real work, so it stands — but the label
+# was probably meant as a target, and a wip commit on the wrong branch is not
+# something to discover later.
+@test "park: a dirty tree still parks under a lane-shaped label, and says whose tree it took" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" faraway)"
+  echo mine >"$main/scratch.txt"
+  cd "$main"; wt_run park faraway
+  [ "$status" -eq 0 ] || fail "a dirty park was blocked by the label: $output"
+  [[ "$(git -C "$main" log -1 --format=%s)" == "wip: faraway (parked "* ]]
+  [[ "$output" == *"not that lane"* ]] || fail "park never said which tree it took: $output"
+}
+
+@test "park: the lane's OWN name is an ordinary label — no false alarm" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" here)"
+  echo x >>"$dir/README.md"
+  cd "$dir"; wt_run park here
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not that lane"* ]] || fail "park warned about the lane it is standing in: $output"
+}
+
 @test "park: refuses on detached HEAD — the commit would be unreachable" {
   local main dir head; main="$(mkrepo alpha)"; dir="$(mkwt "$main" p4)"
   git -C "$dir" checkout -q --detach
@@ -1606,6 +1643,11 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   git -C "$main" show-ref -q --verify refs/heads/worktree-messy \
     || fail "a refused drop still deleted the branch"
   [ -f "$dir/uncommitted.txt" ] || fail "a refused drop still ate the working tree"
+  # Named and pointed at, like the occupancy refusal beside it: two stray
+  # screenshots and a half-written migration want opposite decisions, and from
+  # the pane reading this you can see neither.
+  [[ "$output" == *"uncommitted.txt"* ]] || fail "the refusal named no file: $output"
+  [[ "$output" == *"cd $dir"* ]] || fail "the refusal pointed at no checkout to park in: $output"
 }
 
 @test "drop: refuses a lane a pane is standing in, and names what is standing there" {

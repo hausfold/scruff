@@ -34,7 +34,7 @@ system, the package manager or which agent is running.
 | …opened on a task, not a blank pane | `--prompt '<task>'`, or `--prompt-file <file>` |
 | a lane on *another* repo | `scruff child <repo>` |
 | a lane on any repo, with a task, from a spawner with no pane | `scruff spawn <repo> <name> --prompt-file <file>` |
-| set the tree aside | `scruff park [label]` |
+| set the tree aside | `scruff park [label]` — the tree you are STANDING in; the argument is a label, never a lane |
 | put it back | `scruff unpark` |
 | sweep landed lanes | `scruff reap` |
 | what got reaped, and the SHA to undo it | `scruff reaped` |

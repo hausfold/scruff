@@ -118,8 +118,20 @@ func (e *Env) Drop(want string) error {
 			return exitcode.Refusedf("something is standing in %s: %s — close the pane, or end that process, first",
 				label, occupancy.Describe(entry.Path, held))
 		}
-		if gitx.Dirty(entry.Path) {
-			return exitcode.Refusedf("%s has uncommitted changes and no PR to fall back on — `scruff park` them first, or commit", label)
+		// Named, for the same reason, and pointed AT the checkout: park works
+		// on the tree you are standing in, so "`scruff park` them first" typed
+		// from the pane that just read this refusal parks the wrong repo — or,
+		// if that one is clean, nothing at all while reporting success.
+		dirt, err := gitx.Status(entry.Path)
+		if err != nil {
+			// git could not answer, and this is the branch that DELETES. Same
+			// rule the sweep holds to: uncertainty resolves to keep, out loud.
+			return exitcode.Refusedf("git couldn't read %s's checkout, so scruff can't tell whether there's unsaved work in it — nothing is dropped on a guess: %s",
+				label, entry.Path)
+		}
+		if dirt != "" {
+			return exitcode.Refusedf("%s has uncommitted changes and no PR to fall back on: %s — park them from inside it first: cd %s && scruff park",
+				label, dirtyPaths(dirt), entry.Path)
 		}
 	}
 
