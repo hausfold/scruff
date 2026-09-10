@@ -59,13 +59,14 @@ scruff spawn "$repo" <name> --prompt-file <that file>
 
 - **`<name>` comes from the objective, not its first words.** Three or four
   identity-carrying words, kebab-case — `bar-pill-flickers`, not
-  `look-into-why-the`; scruff suffixes it if it is taken. Omit it only where the
-  machine sets `namer` — you wrote the brief, so you are the better namer.
+  `look-into-why-the`; scruff suffixes a taken name, and refuses one over a
+  machine's cap on the key `scruff/<repo>/<lane>` instead of trimming it, so a
+  refusal wants a word fewer and costs nothing. Omit it only where the machine
+  sets `namer` — you wrote the brief, so you are the better namer.
 - **`--prompt-file`, never `--prompt "$(cat …)"`.** A brief is multi-line and
-  routinely holds quotes, backticks and `$`; the file form never crosses a
-  shell, so none of that can be mangled.
-- **Another repo?** Pass its main checkout as `repo` — that is the whole reason
-  the path is an argument, so "kick this off in <other repo>" stays one call.
+  routinely holds quotes, backticks and `$`; the file form never crosses a shell.
+- **Another repo?** Pass its main checkout as `repo`, which is why the path is
+  an argument: "kick this off in <other repo>" stays one call.
 - `--agent claude|codex|opencode|pi` picks the client (default: the machine's);
   `--image <file>` puts a screenshot in front of the first turn — attached where
   the client can do that, named in the prompt where it can't.
@@ -108,9 +109,8 @@ Read first: <the doc, rule or skill it needs before editing. Omit if none.>
   <name>` rebuilds the checkout around it. Paths inside the repo go repo-relative.
 - **Point at what is already written, never copy it.** A spec, an issue, a PR, a
   diff, a rule in AGENTS.md — give the path or the URL. Two copies drift.
-- **No secrets.** The brief becomes a file on disk and, on the lane ending,
-  another agent's prompt: name the env var or the vault item, never paste a key,
-  a token or a password.
+- **No secrets.** The brief lands on disk and in another agent's prompt: name
+  the env var or the vault item, never paste a key or a token.
 - **Say what's unproven.** The next session treats the brief as a contract and
   won't re-check it, so "builds, not feel-tested" beats a confident "done".
 - **Carry the constraints, not the history.** "We decided X over Y because Y
