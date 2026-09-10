@@ -94,6 +94,7 @@ leases: [hausfold.co/docs/scruff/sdks](https://hausfold.co/docs/scruff/sdks/).
 - [`ai/SKILL.md`](ai/SKILL.md) — the agent surface: your agent drives scruff correctly first try. It ships *inside the binary*, so `scruff skill install` puts it in front of every agent client on the machine (a haus box already has it)
 - [`ai/handoff/SKILL.md`](ai/handoff/SKILL.md) — the companion skill: write a brief a cold session can act on, and `scruff spawn --prompt-file` it into its own lane
 - [`AGENTS.md`](./AGENTS.md) — hacking on scruff: the invariants, the frozen contracts, what `make check` doesn't cover
+- [`THANKS.md`](./THANKS.md) — git, the Go libraries scruff leans on, and the people who ran it before it was public
 - [`SPEC.md`](SPEC.md) — the design of record, and the contracts that are frozen
 - [`docs/releasing.md`](docs/releasing.md) — how the CLI and all five SDKs are cut from one number
 - `scruff --help` — the exhaustive flag list
