@@ -28,12 +28,14 @@ every manifest against the tag and fails the run if they disagree.
 
 ## The number
 
-Semver, a plain `X.Y.Z` with no prerelease suffix. npm, PyPI and crates.io never
-let a published version be withdrawn — only superseded — so the number is a
-compatibility contract, not a date, and CalVer would force the Go SDK's import
-path to end in `/v2026` and change it every January. The suffix is barred
-because PEP 440 would rewrite `0.2.0-rc1` to `0.2.0rc1` on the Python side while
-npm and crates kept it verbatim, and the one number would stop being one number.
+Semver, a plain `X.Y.Z` with no prerelease suffix. npm, PyPI and crates.io
+already hold semver versions under the pre-rename `holt` names and never let a
+published version be withdrawn — only superseded — so the number is a
+compatibility contract people pinned against, not a date. CalVer would also
+force the Go SDK's import path to end in `/v2026` and change it every January.
+The suffix is barred because PEP 440 would rewrite `0.2.0-rc1` to `0.2.0rc1` on
+the Python side while npm and crates kept it verbatim, and the one number would
+stop being one number.
 
 Judge the bump against the **published SDK surface**, not the CLI internals:
 
@@ -43,8 +45,9 @@ git diff "$(git describe --tags --abbrev=0 --match 'v*')"..main -- sdk/
 
 All five share the one number, so a break in the Rust client alone bumps all
 five — five clients agreeing about one wire format is the invariant the `sdks`
-job in [`check.yml`](../.github/workflows/check.yml) exists to protect. The
-workshop's `/release` skill carries the taxonomy and the worked examples.
+and `swift-sdk` jobs in [`check.yml`](../.github/workflows/check.yml) exist to
+protect. The taxonomy and the worked examples are the workshop's
+[`/release` skill](https://github.com/hausfold/workshop/blob/main/.agents/skills/release/SKILL.md).
 
 ## Where the version lives
 
@@ -60,11 +63,13 @@ script/stamp-version.sh --check <X.Y.Z>    # what CI runs against the pushed tag
 
 ## Bootstrapping a registry
 
-Publishing authenticates by OIDC, and the browser form each registry needs is in
-`release.yml`'s header. The three in use are wired. What that header doesn't
-say is what it costs to add a *new* package, because a trusted publisher matches
-on repo **and** package name — so a rename starts over, and none of the old
-entries carries across:
+Publishing authenticates by OIDC — except the Swift mirror, which pushes to
+*another* repository and so needs the `MIRROR_TOKEN` PAT `release.yml`'s header
+describes, the one credential here that can expire. That header also carries the
+browser form each of the other three registries needs, and all three are wired.
+What it doesn't say is what adding a *new* package costs, because a trusted
+publisher matches on repo **and** package name — so a rename starts over, and
+none of the old entries carries across:
 
 - **npm and crates.io both insist the package exist first**, so a name neither
   has seen has to be published by hand once before CI can take it. PyPI's

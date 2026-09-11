@@ -115,7 +115,8 @@ bench release scruff <X.Y.Z>      # stamps every manifest, commits, tags, watche
 
 Semver is forced (three immutable registries). Read
 `git diff <last-tag>..main -- sdk/` against the published SDK surface
-(`docs/releasing.md`), propose the number, never run it unprompted.
+(`docs/releasing.md`; the bump taxonomy is the workshop's `/release` skill),
+propose the number, never run it unprompted.
 
 ## Landing work
 
