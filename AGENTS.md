@@ -11,6 +11,14 @@ file is for an agent working *on* scruff from a checkout; per-client wiring is
 moves changes that tree and `ai/SKILL.md` in the same PR; `ai/handoff/SKILL.md`
 too for `--prompt`, `--prompt-file`, `--agent`, `--image` or spawn's exit 3.
 
+The mark is [`assets/`](./assets/README.md): three SVGs are the sources of
+record and their PNGs render from them with `resvg`, the two banners are raster
+with no source here, and every nebelung hex is **baked in**, so a palette change
+is swapped in all three SVGs and re-rendered. What the mark may be — the ears
+used verbatim, one hue, radius 24, the geometry written out as text — is the
+brand kit's `docs/design.md`, and a change to it lands here **first** and in the
+workshop second.
+
 ## Invariants
 
 In priority order; trading one away is wrong even with a green suite.

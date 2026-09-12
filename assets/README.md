@@ -28,7 +28,7 @@ stepping darker.
 | `scruff-square-latte.svg` | **The light tile's source of record**, same geometry, same viewBox, in nebelung's latte set. |
 | `scruff-square-latte.png` | 2048×2048, rendered from it. |
 | `scruff-banner.png` | 1200×348 identity banner, the maroon wordmark beside the mark on a rounded graphite tile, on the family's shared banner lockup. What the README opens with. |
-| `scruff-banner-inverted.png` | 1200×348, the same lockup turned over: maroon ground, `crust` wordmark, and `A LANE PER AGENT` under it. The one place the tagline is drawn. |
+| `scruff-banner-inverted.png` | 1200×348, the same lockup turned over: maroon ground, `crust` wordmark, and `A LANE PER AGENT` under it. The one place the tagline is drawn, and the banner for a light ground, where the graphite one would sit in a hole. |
 
 scruff ships no app and so no app icon: there are no icon slots to derive, and
 no iOS square. The two banners are raster only, the way every banner in the
