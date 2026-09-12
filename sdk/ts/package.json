@@ -1,6 +1,6 @@
 {
   "name": "@hausfold/scruff",
-  "version": "1.3.6",
+  "version": "1.3.61",
   "description": "TypeScript SDK for scruff, the worktree-lifecycle substrate. Shells out to the scruff binary; works from Bun or Node, and its types are safe to ship to a browser bundle.",
   "type": "module",
   "license": "MIT",
