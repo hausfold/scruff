@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="2048" height="2048">
+  <!-- scruff, the standard tile. A lane per agent, the one you're in lit.
+       Source of record for this mark: the PNGs beside it render from this file.
+       Shapes, colour roles and the rules they answer to are in the brand kit's
+       docs/design.md, under Components. The ears are the family path, used
+       verbatim: move, scale or recolour them, never redraw them. -->
+  <clipPath id="scruff-tile"><rect width="100" height="100" rx="24"/></clipPath>
+  <g clip-path="url(#scruff-tile)">
+    <rect width="100" height="100" fill="#343434"/>
+    <g fill="#e6a3ad" transform="translate(14 4) scale(0.72)">
+      <path d="M 18 13 Q 34 18 47 24 Q 34 35 30.5 57 Q 20 34 18 13 Z"/>
+      <path d="M 82 13 Q 66 18 53 24 Q 66 35 69.5 57 Q 80 34 82 13 Z"/>
+    </g>
+    <rect x="21" y="56" width="14" height="32" rx="7" fill="#494949"/>
+    <rect x="43" y="56" width="14" height="32" rx="7" fill="#e6a3ad"/>
+    <rect x="65" y="56" width="14" height="32" rx="7" fill="#494949"/>
+  </g>
+</svg>
