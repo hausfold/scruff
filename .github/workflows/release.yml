@@ -142,7 +142,9 @@ jobs:
         run: |
           python -m pip install --quiet build
           python -m build
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # `release/v1` is a branch. This job holds `id-token: write` against
+      # PyPI, which makes it the worst place in the repo for a floating ref.
+      - uses: pypa/gh-action-pypi-publish@v1.14.2
         with:
           packages-dir: sdk/python/dist
           skip-existing: true     # makes a rerun a no-op, not a 400
@@ -156,7 +158,11 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # `stable` is a BRANCH of the action repo, not a version — the same
+      # mutable-ref shape `@main` was. dtolnay publishes no release tags, so a
+      # commit is the only pin there is. It still installs stable Rust; what is
+      # frozen is the action, not the toolchain.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # stable
       - name: already published?
         id: pub
         run: |
