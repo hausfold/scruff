@@ -48,6 +48,9 @@ func (e *Env) Reap(deadEnds bool) error {
 	for _, note := range res.Diverged {
 		ui.Say("kept %s", note)
 	}
+	for _, note := range res.Unlanded {
+		ui.Say("kept %s", note)
+	}
 	dropped := 0
 	if deadEnds {
 		dropped = e.retireDeadEnds(res.DeadEnds)
@@ -64,7 +67,7 @@ func (e *Env) Reap(deadEnds bool) error {
 		// three reasons in the abstract right after naming the concrete one,
 		// which read as a second, contradictory verdict.
 		spoke := len(res.SkippedLive) + len(res.Dirty) + len(res.Relanded) +
-			len(res.Diverged) + len(res.DeadEnds) + len(res.Strays)
+			len(res.Diverged) + len(res.Unlanded) + len(res.DeadEnds) + len(res.Strays)
 		if spoke == 0 {
 			ui.Say("nothing to reap — every lane is either unmerged, dirty, or in use.")
 		} else {

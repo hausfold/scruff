@@ -28,6 +28,7 @@ type SweepResult struct {
 	Dirty       []string      // reapable but for uncommitted work in the checkout
 	Relanded    []string      // landed PR, but the branch committed past it
 	Diverged    []string      // landed PR, but the tip isn't built on what merged
+	Unlanded    []string      // clean and unoccupied, but nothing has landed it yet
 	DeadEnds    []deadEndLane // nothing will ever land these: PR closed, repo archived
 	Degraded    bool          // occupancy was unknowable, so live checkouts were spared
 }
@@ -258,6 +259,15 @@ func porcelainPath(l string) string {
 //
 // The dead-end question is asked LAST and only when the count is zero, so its
 // up-to-three forge calls stay off the path every healthy lane walks.
+//
+// Anything left over is the FOURTH shape and by far the commonest: a lane still
+// in flight. It used to fall out of this function having appended nothing, so
+// `reap` never mentioned it — and on a repo whose PRs scruff cannot see at all
+// (GitLab, sourcehut, a bare remote, `gh` unauthenticated, a fork whose PRs live
+// on `upstream`) that is EVERY lane, forever: `scruff reap` printed nothing and
+// closed with "see above for what held each lane back", pointing at nothing.
+// Named, it is the reassuring line it always should have been, and the one that
+// tells a lane nobody is sitting in from a lane scruff forgot.
 func (e *Env) noteRelanded(res *SweepResult, entry Entry) {
 	name := entry.Label()
 	n, pr, diverged := e.postMergeAhead(entry.Main, entry.Branch)
@@ -269,7 +279,17 @@ func (e *Env) noteRelanded(res *SweepResult, entry Entry) {
 		// that acts on this list.
 		if why := e.deadEnd(entry.Main, entry.Branch); why != "" {
 			res.DeadEnds = append(res.DeadEnds, deadEndLane{lane: entry, why: why})
+			return
 		}
+		// Phrased as what scruff MEASURED, never as what the forge said: on a
+		// host `gh` cannot answer for, "no merged PR" would be a claim scruff is
+		// not entitled to make, while "it is not in <default>" is true wherever
+		// the repo lives.
+		res.Unlanded = append(res.Unlanded,
+			name+" — "+entry.Branch+" is not in "+gitx.DefaultBranch(entry.Main)+
+				" yet, and scruff only sweeps what has landed."+
+				" Nothing to do while it is still in flight; scruff drop "+entry.Name()+
+				" retires it if it never will.")
 		return
 	}
 	if diverged {
