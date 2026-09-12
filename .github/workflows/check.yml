@@ -10,6 +10,20 @@ on:
   # clears, not a re-typed approximation of it that drifts.
   workflow_call:
 
+# A second push to a PR branch makes the first run's answer worthless, and the
+# abandoned run still holds a runner — on the macOS ones, a queue slot the next
+# PR then waits behind.
+#
+# Only a PR run is ever in a shared group. Everything else keys on the commit,
+# so it gets a group of its own: putting main pushes in one group would
+# SERIALIZE them even with cancelling off, and GitHub cancels a *pending* run
+# when a newer one joins its group — so three merges inside one build would
+# leave the middle commit with no run at all. That is the tick this is
+# supposed to protect.
+concurrency:
+  group: check-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # The suite shims `gh` and `lsof` on PATH and builds throwaway repos in a
@@ -27,10 +41,18 @@ jobs:
         with:
           go-version: '1.26'
           cache: true           # fsnotify is now a real dependency — see go.mod
+      # npm on both runners rather than brew on one and apt on the other: it
+      # is preinstalled on every image, and neither of the two it replaces is
+      # fast — `brew install` refreshes its own metadata first, and `apt-get
+      # update` is the step that hangs rather than fails when the Azure
+      # mirrors go quiet.
       - name: install bats
         run: |
-          if [ "$RUNNER_OS" = macOS ]; then brew install bats-core
-          else sudo apt-get update && sudo apt-get install -y bats; fi
+          # `sudo` only on Linux: the macOS image's npm prefix belongs to the
+          # runner user, and installing as root there leaves root-owned files
+          # in it for everything downstream.
+          if [ "$RUNNER_OS" = macOS ]; then npm install -g bats
+          else sudo npm install -g bats; fi
 
       # Cheap, and it catches a class of failure nothing else can see: a skill
       # with broken frontmatter installs, lists and is never loaded. Same script
@@ -71,7 +93,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - uses: dtolnay/rust-toolchain@stable
+      # `stable` is a BRANCH of the action repo, not a version — the same
+      # mutable-ref shape `@main` was. dtolnay publishes no release tags, so a
+      # commit is the only pin there is. It still installs stable Rust; what is
+      # frozen is the action, not the toolchain.
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # stable
 
       - name: typescript
         working-directory: sdk/ts
@@ -112,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/nix-installer-action@v23
       - name: vendorHash matches go.mod
         run: nix build .#default.goModules --no-link --print-build-logs
 
