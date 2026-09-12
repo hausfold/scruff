@@ -1,8 +1,11 @@
 <div align="center">
 
-# scruff
+<!-- identity banner — maroon wordmark on graphite (assets/scruff-banner.png) -->
+<img src="./assets/scruff-banner.png" alt="scruff" width="480">
 
-**the worktree-lifecycle substrate for parallel coding agents**
+**a lane per agent**
+
+the worktree-lifecycle substrate for parallel coding agents
 
 never loses work · never reaps what's in use · the registry, not the filesystem, is truth
 
