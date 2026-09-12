@@ -89,12 +89,6 @@ func cutCell(s string) string {
 }
 
 // Drop retires a lane whose work will never land — `scruff drop <name>`.
-//
-// Everything `reap` refuses on is refused here too EXCEPT landedness: a pane
-// standing in the checkout still wins (removing it yanks the cwd out from under
-// a running client), and so does an uncommitted tree, because an unlanded lane's
-// dirt has no PR anywhere to fall back on. Only the "has it landed?" gate is
-// waived, and only because a human typed this lane's name.
 func (e *Env) Drop(want string) error {
 	if want == "" {
 		return exitcode.Usagef("name the lane to drop: scruff drop <name>  (scruff, to see them)")
@@ -103,7 +97,21 @@ func (e *Env) Drop(want string) error {
 	if err != nil {
 		return err
 	}
-	label := entry.Name() + " (" + filepath.Base(entry.Main) + ")"
+	return e.retire(entry)
+}
+
+// retire is Drop's destructive half, with the lane already resolved — the seam
+// `scruff reap --dead-ends` arrives through, so the bulk form and the single
+// typed name destroy a lane by exactly the same code, refusals included.
+//
+// Everything `reap` refuses on is refused here too EXCEPT landedness: a pane
+// standing in the checkout still wins (removing it yanks the cwd out from under
+// a running client), and so does an uncommitted tree, because an unlanded lane's
+// dirt has no PR anywhere to fall back on. Only the "has it landed?" gate is
+// waived, and only because a human said so — a lane name, or the flag. Nothing
+// automatic reaches here, which is the whole of SPEC.md §6.4b's asymmetry.
+func (e *Env) retire(entry Entry) error {
+	label := entry.Label()
 
 	if entry.State == Live {
 		selfTop, _ := gitx.Toplevel(e.Cwd)
@@ -207,6 +215,15 @@ func (e *Env) closedPR(main, branch string) int {
 		return 0
 	}
 	if state, _, _ := e.mergedPR(main, branch); state == "MERGED" {
+		return 0
+	}
+	// An OPEN PR is a louder "this can still land" than a closed one is a "it
+	// can't". Closing a PR and opening a fresh one on the same branch is
+	// ordinary — a wrong base, a thread gone stale, a rename — and the closed
+	// record outlives the replacement forever. Without this rung the lane reads
+	// as rejected while it sits in review: a wrong word on a `kept` line before
+	// `reap --dead-ends` existed, and a deletion of work under review after it.
+	if _, pr := e.openMapLookup(main, branch); pr > 0 {
 		return 0
 	}
 	out := e.cachedForge("closed-"+slug+"-"+branch,

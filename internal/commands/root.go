@@ -38,6 +38,9 @@ A LANE is one agent's branch, checkout and pane, from create to reaped.
   scruff reap               sweep every LANDED lane that nobody is standing in
                           occupied, dirty and unlanded lanes are kept and named;
                           scruff reaped has the SHA to undo any of it
+                          --dead-ends also retires the lanes nothing will ever
+                          land (PR closed unmerged, repo archived) — same
+                          refusals and the same undo as scruff drop
   scruff reaped             what scruff has reaped, why, and the SHA to get it back
   scruff drop <name>        retire a lane whose work will never land (closed PR,
                           archived repo) — recorded in scruff reaped, undoable
@@ -149,10 +152,10 @@ func Run(args []string) error {
 	// of typo is unbounded (`--help`, `--dry-run`, `-n`, a lane name), and a
 	// sweep is not the thing to do while unsure what was asked for.
 	case "reap":
-		if err := noArgs("reap", args[1:]); err != nil {
+		if err := noWords("reap", args[1:], "--dead-ends"); err != nil {
 			return err
 		}
-		return env.Reap()
+		return env.Reap(hasFlag(args, "--dead-ends"))
 
 	case "reaped":
 		if err := noArgs("reaped", args[1:]); err != nil {
@@ -349,6 +352,24 @@ func noArgs(verb string, args []string) error {
 			continue
 		}
 		return exitcode.Usagef("`scruff %s` takes no arguments — %q is not one, so nothing ran. `scruff %s --help` explains the verb", verb, a, verb)
+	}
+	return nil
+}
+
+// noWords is noArgs for a verb that takes named flags but no bare words. Same
+// refusal, same reason: the flag it does accept is spelled out, and everything
+// else stops the run rather than being swallowed by the verb that DELETES.
+func noWords(verb string, args []string, allowed ...string) error {
+	for _, a := range args {
+		switch {
+		case a == "":
+		case strings.HasPrefix(a, "-"):
+			if !flagAllowed(a, allowed) {
+				return unknownFlag(verb, a)
+			}
+		default:
+			return exitcode.Usagef("`scruff %s` takes no arguments — %q is not one, so nothing ran. `scruff %s --help` explains the verb", verb, a, verb)
+		}
 	}
 	return nil
 }

@@ -910,7 +910,7 @@ Two lanes can never land, and neither is "not landed yet":
 
 | shape | forge record | scruff's answer |
 |---|---|---|
-| The branch's PR was **closed unmerged** | latest PR `CLOSED`, none `MERGED` | named by `reap`, never swept — the work was *rejected*, and those commits are the only copy |
+| The branch's PR was **closed unmerged** | latest PR `CLOSED`, none `MERGED`, none `OPEN` | named by `reap`, never swept — the work was *rejected*, and those commits are the only copy |
 | The repo is **archived** on the forge | `isArchived: true` | named by `reap`, never swept — nothing can be submitted anywhere any more |
 
 Both read exactly like an in-flight branch, so before this they outlived
@@ -920,8 +920,27 @@ automatic, so it may only ever take landed work; `drop` is a human typing one
 lane's name, so it may take anything.** Widening the automatic sweep to delete
 rejected work is precisely the thing scruff exists to never do.
 
-`deadEnd` costs two forge calls, so it is asked **only of lanes a sweep has
-already declined to reap** — the listing (which the statusline runs several
+**`scruff reap --dead-ends`** is therefore the *bulk* form of `drop`, not a
+wider sweep. It does not spend the asymmetry, it restates it: the flag is the
+human word, said once instead of once per lane, and every lane it takes goes
+through `drop`'s own code — the same occupancy and dirt refusals, the same
+ledger line, the same undo printed as it happens. Nothing automatic reaches it;
+the listing's parked sweep, the remove hook and a bare `scruff reap` all still
+walk past a dead end and merely name it. One refusal never ends the run: an
+occupied or dirty lane prints as a `kept` line like everything else the sweep
+declined, and the command still exits 0.
+
+What makes the flag safe is the third rung of `closedPR`: an **open** PR on the
+branch outranks a closed one. Closing a PR and opening a fresh one on the same
+branch is ordinary — a wrong base, a stale review thread — and the closed record
+outlives the replacement forever. Before the flag that misread cost a wrong word
+on a `kept` line; with it, it would delete a branch sitting in review. `reap`
+also clears the forge memo before it asks (`cacheTTL = 0`) for the same reason: a
+PR reopened a minute ago is no longer a dead end, and a stale answer is the one
+way this could take something still in play.
+
+`deadEnd` costs up to three forge calls, so it is asked **only of lanes a sweep
+has already declined to reap** — the listing (which the statusline runs several
 times a minute) never pays for it.
 
 **The ledger.** Every branch deletion — `reap`, the parked sweep, the remove
