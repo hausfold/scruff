@@ -54,6 +54,10 @@ type Entry struct {
 // Name is the lane name — the branch minus the agent-branch prefix.
 func (e Entry) Name() string { return strings.TrimPrefix(e.Branch, "worktree-") }
 
+// Label is how a lane is named to a human: `<name> (<repo>)`. Lanes of the same
+// name in two repos are ordinary here, so the repo is never decoration.
+func (e Entry) Label() string { return e.Name() + " (" + filepath.Base(e.Main) + ")" }
+
 // discover returns every resumable or live lane, deduped.
 //
 // Fully generic: the set of repos is discovered, never configured. Three

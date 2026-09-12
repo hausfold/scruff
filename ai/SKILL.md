@@ -38,7 +38,7 @@ system, the package manager or which agent is running.
 | put it back | `scruff unpark` |
 | sweep landed lanes | `scruff reap` |
 | what got reaped, and the SHA to undo it | `scruff reaped` |
-| retire a lane that will never land | `scruff drop <name>` |
+| retire a lane that will never land | `scruff drop <name>` — or `scruff reap --dead-ends` to take every one at once (closed PR, archived repo) |
 | push commits that outran a merged PR | `scruff reship [name]` |
 | stand up/enter/tear down a lane's VM or container | `scruff runtime up\|enter\|down <name> --backend <id>` |
 | **see a desktop change work without touching the user's screen** | `scruff runtime up <name> --backend tart` — built in, needs `tart` + `SCRUFF_TART_BASE`. Boots a headless macOS with the lane shared in and returns once a shell answers; then drive it over `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@$(tart ip scruff-<name>)` (both options, always — vmnet gives the next clone the same address): `screencapture -x` there returns real pixels, `osascript` sends the keystrokes. Prefer this over asking to drive the machine you are on |

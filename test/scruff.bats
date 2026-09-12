@@ -1621,6 +1621,109 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   [[ "$output" != *"closed unmerged"* ]] || fail "a branch that DID land was called a dead end: $output"
 }
 
+# ── reap --dead-ends: drop's bulk form ───────────────────────────────────────
+#
+# The plain sweep names dead ends and walks past them, which is right — it runs
+# by itself, and rejected commits are still commits. The cost was that clearing
+# them meant `scruff drop <name>` once per lane, forever. `--dead-ends` is the
+# same human word said once instead of N times: still typed, still refusing
+# everything `drop` refuses, still leaving an undo line per lane.
+
+@test "reap --dead-ends: takes the closed-PR lane the plain sweep only names" {
+  local main; main="$(mkrepo alpha)"; mkwt "$main" rejected >/dev/null
+  local sha; sha="$(git -C "$main" rev-parse worktree-rejected)"
+  export FAKE_GH_CLOSED_PR=43
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PR #43 was closed unmerged"* ]] \
+    || fail "a lane was deleted without the reason attached: $output"
+  ! git -C "$main" show-ref -q --verify refs/heads/worktree-rejected \
+    || fail "--dead-ends named the dead end and left it there"
+  # A deletion with no way back is the thing `drop` exists not to be, and the
+  # bulk form inherits that or it is not the same operation.
+  [[ "$output" == *"undo:"* ]] || fail "no way back was printed: $output"
+  [[ "$output" == *"${sha:0:12}"* ]] || fail "no SHA was printed: $output"
+  grep -q "rejected" "$XDG_STATE_HOME/scruff/reaped.log" \
+    || fail "the ledger has no line for what --dead-ends took"
+  [ "$(reg_rows)" -eq 0 ] || fail "the registry row outlived the lane"
+}
+
+@test "reap --dead-ends: takes an archived repo's lane too" {
+  local main; main="$(mkrepo alpha)"; mkwt "$main" frozen >/dev/null
+  export FAKE_GH_ARCHIVED=true
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"archived on the forge"* ]] || fail "no reason given: $output"
+  ! git -C "$main" show-ref -q --verify refs/heads/worktree-frozen \
+    || fail "the other dead-end shape was left behind"
+}
+
+@test "reap --dead-ends: a lane still in play is untouched" {
+  # The whole risk of this flag is that it widens into a sweep of unlanded work.
+  # No closed PR, no archived repo — nothing about this lane says it can't land.
+  local main; main="$(mkrepo alpha)"; mkwt "$main" inflight >/dev/null
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-inflight \
+    || fail "--dead-ends deleted work that is still in review: $output"
+}
+
+@test "reap --dead-ends: a closed PR replaced by an OPEN one is not a dead end" {
+  # Closing a PR and opening a fresh one on the same branch is ordinary — a
+  # wrong base, a stale review thread — and the closed record outlives the
+  # replacement forever. Before --dead-ends that was a wrong word on a kept
+  # line; with it, it would delete a branch that is sitting in review.
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" second-try)"
+  export FAKE_GH_CLOSED_PR=43
+  export FAKE_GH_OPEN_BRANCH=worktree-second-try FAKE_GH_OPEN_PR=50
+  export FAKE_GH_OPEN_OID="$(git -C "$dir" rev-parse HEAD)"
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-second-try \
+    || fail "--dead-ends deleted a branch with an open PR on it: $output"
+  [[ "$output" != *"closed unmerged"* ]] || fail "a lane in review was called rejected: $output"
+}
+
+@test "reap --dead-ends: a dirty dead end is kept, tree and all" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" messy)"
+  echo scratch >"$dir/uncommitted.txt"
+  export FAKE_GH_CLOSED_PR=43
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-messy \
+    || fail "--dead-ends deleted a branch with uncommitted work on it"
+  [ -f "$dir/uncommitted.txt" ] || fail "--dead-ends ate the working tree"
+  [[ "$output" == *"uncommitted.txt"* ]] || fail "kept it without naming what was in the way: $output"
+}
+
+@test "reap --dead-ends: an occupied dead end is kept, and the sweep goes on" {
+  local main busy; main="$(mkrepo alpha)"
+  busy="$(mkwt "$main" busy)"; mkwt "$main" doomed >/dev/null
+  export FAKE_GH_CLOSED_PR=43
+  export FAKE_LSOF_CWDS="$busy" FAKE_LSOF_CMD=node
+  cd "$TMP"; wt_run reap --dead-ends
+  [ "$status" -eq 0 ] || fail "one kept lane ended the whole sweep (exit $status): $output"
+  git -C "$main" show-ref -q --verify refs/heads/worktree-busy \
+    || fail "--dead-ends yanked a checkout out from under a live process"
+  [[ "$output" == *"pid 4001 node"* ]] || fail "the kept lane named no occupant: $output"
+  ! git -C "$main" show-ref -q --verify refs/heads/worktree-doomed \
+    || fail "one lane being kept stopped the sweep reaching the next"
+}
+
+@test "reap: --dead-ends is the only flag, and a bare word still stops the sweep" {
+  local main; main="$(mkrepo alpha)"; mkwt "$main" safe >/dev/null
+  export FAKE_GH_CLOSED_PR=43
+  cd "$TMP"; wt_run reap --dry-run
+  [ "$status" -eq 1 ] || fail "expected a usage refusal (exit 1), got $status: $output"
+  [[ "$output" == *"unknown flag"* ]] || fail "$output"
+  cd "$TMP"; wt_run reap deadends
+  [ "$status" -eq 1 ] || fail "a bare word ran the sweep: $output"
+  # Both halves against a lane a --dead-ends run WOULD have taken: a refusal
+  # test on an empty registry proves nothing.
+  git -C "$main" show-ref -q --verify refs/heads/worktree-safe \
+    || fail "an argument scruff could not explain deleted a branch anyway"
+}
+
 # ── drop + the reap ledger ───────────────────────────────────────────────────
 
 @test "drop: takes an unlanded lane reap won't, and prints the undo" {
@@ -2469,6 +2572,7 @@ EOF
   cd "$TMP"; wt_run reap --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"sweep every LANDED lane"* ]]
+  [[ "$output" == *"--dead-ends"* ]] || fail "reap's help doesn't mention the flag that widens it"
   [[ "$output" != *"reaped sweepme"* ]] || fail "--help swept"
   [ -e "$dir" ] || fail "the checkout --help was asked about is gone"
   [ "$(reg_rows)" -eq 1 ]

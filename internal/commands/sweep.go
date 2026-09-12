@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -25,12 +24,28 @@ const (
 type SweepResult struct {
 	Reaped      []string
 	Strays      []string
-	SkippedLive []string // reapable but for a live process standing in the checkout
-	Dirty       []string // reapable but for uncommitted work in the checkout
-	Relanded    []string // landed PR, but the branch committed past it
-	Diverged    []string // landed PR, but the tip isn't built on what merged
-	DeadEnds    []string // nothing will ever land this: PR closed, or repo archived
-	Degraded    bool     // occupancy was unknowable, so live checkouts were spared
+	SkippedLive []string      // reapable but for a live process standing in the checkout
+	Dirty       []string      // reapable but for uncommitted work in the checkout
+	Relanded    []string      // landed PR, but the branch committed past it
+	Diverged    []string      // landed PR, but the tip isn't built on what merged
+	DeadEnds    []deadEndLane // nothing will ever land these: PR closed, repo archived
+	Degraded    bool          // occupancy was unknowable, so live checkouts were spared
+}
+
+// deadEndLane is a lane nothing will ever land, and the forge record that says
+// so. The sweep only ever NAMES these; `scruff reap --dead-ends` is what
+// retires them, and it needs the lane itself rather than the sentence about it.
+type deadEndLane struct {
+	lane Entry
+	why  string
+}
+
+// Note is the "kept" line a sweep prints for a dead end: the reason, and the
+// two ways out. Both are real — the commits were rejected, not landed, so
+// rescuing them is as likely to be what you want as dropping them.
+func (d deadEndLane) Note() string {
+	return d.lane.Label() + " — " + d.why +
+		": rescue the commits, or scruff drop " + d.lane.Name()
 }
 
 // reapSweep removes every LANDED lane the mode allows, and nothing else.
@@ -67,7 +82,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 			// A husk: the contents are preserved but git has disowned it.
 			// Reported, never swept — `scruff <name>` moves it aside and rebuilds.
 			res.Strays = append(res.Strays,
-				entry.Name()+" ("+filepath.Base(entry.Main)+") → "+entry.Path)
+				entry.Label()+" → "+entry.Path)
 			continue
 
 		case Live:
@@ -90,7 +105,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 				// git could not answer, so we do not know the tree is clean —
 				// and this is the branch that DELETES. Uncertainty resolves to
 				// keep, out loud.
-				res.Dirty = append(res.Dirty, entry.Name()+" ("+filepath.Base(entry.Main)+")"+
+				res.Dirty = append(res.Dirty, entry.Label()+
 					" — git could not read the checkout, so scruff cannot tell whether"+
 					" there is unsaved work in it; nothing is reaped on a guess: "+entry.Path)
 				continue
@@ -127,7 +142,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 			// is of a lane that ended its turn cleanly and has nothing on the
 			// ledge. A sweep of forty lanes launches nothing.
 			takeDownAsk(askKey(laneID(entry.Main, entry.Name()), nil))
-			res.Reaped = append(res.Reaped, entry.Name()+" ("+filepath.Base(entry.Main)+")")
+			res.Reaped = append(res.Reaped, entry.Label())
 		} else {
 			e.noteRelanded(&res, entry)
 		}
@@ -153,7 +168,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 // Deliberately NOT a suggestion to kill anything. scruff does not know whose
 // process that is, and the whole point of naming it is that the human can tell.
 func occupiedNote(entry Entry, held []occupancy.Holder) string {
-	return entry.Name() + " (" + filepath.Base(entry.Main) + ")" +
+	return entry.Label() +
 		" — something is standing in the checkout: " + occupancy.Describe(entry.Path, held) +
 		". Nothing is reaped out from under a live process; close the pane, or if" +
 		" that is a stray, end it — then reap again: " + entry.Path
@@ -168,7 +183,7 @@ func occupiedNote(entry Entry, held []occupancy.Holder) string {
 // which makes the branch unlanded and moves the lane from this refusal to the
 // next one. The two real ways out are commit it or clean it.
 func dirtyNote(entry Entry, porcelain string) string {
-	return entry.Name() + " (" + filepath.Base(entry.Main) + ")" +
+	return entry.Label() +
 		" — uncommitted work in the checkout: " + dirtyPaths(porcelain) +
 		". Nothing is reaped over that; commit it or clean it, then reap again: " + entry.Path
 }
@@ -237,21 +252,23 @@ func porcelainPath(l string) string {
 //     Same nonzero commit count as "moved on" and the opposite remedy: its
 //     content already landed, so reshipping would push and PR what the merge
 //     already superseded. Remove the checkout instead.
-//   - "dead end" — no merged PR at all, and there never will be one, because the
-//     PR was closed unmerged or the repo is archived → `scruff drop`.
+//   - "dead end" — no merged PR at all, no open one, and there never will be
+//     either, because the PR was closed unmerged or the repo is archived →
+//     `scruff drop`, or `scruff reap --dead-ends` for the lot.
 //
 // The dead-end question is asked LAST and only when the count is zero, so its
-// two forge calls stay off the path every healthy lane walks.
+// up-to-three forge calls stay off the path every healthy lane walks.
 func (e *Env) noteRelanded(res *SweepResult, entry Entry) {
-	name := entry.Name() + " (" + filepath.Base(entry.Main) + ")"
+	name := entry.Label()
 	n, pr, diverged := e.postMergeAhead(entry.Main, entry.Branch)
 	if n == 0 {
-		// `reap` still won't touch a dead end — the commits are unlanded and this
-		// sweep is automatic — but a lane that can never land has to SAY so, or it
-		// reads exactly like one still in flight and outlives everything around it.
+		// The plain sweep still won't touch a dead end — the commits are
+		// unlanded and it is automatic — but a lane that can never land has to
+		// SAY so, or it reads exactly like one still in flight and outlives
+		// everything around it. `scruff reap --dead-ends` is the typed word
+		// that acts on this list.
 		if why := e.deadEnd(entry.Main, entry.Branch); why != "" {
-			res.DeadEnds = append(res.DeadEnds,
-				name+" — "+why+": rescue the commits, or scruff drop "+entry.Name())
+			res.DeadEnds = append(res.DeadEnds, deadEndLane{lane: entry, why: why})
 		}
 		return
 	}
