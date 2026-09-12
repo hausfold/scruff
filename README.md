@@ -39,6 +39,7 @@ the branch only this pane has checked out; `scruff unpark` puts it back.
 ## install
 
 ```sh
+brew install hausfold/tap/scruff                          # from our tap
 nix run github:hausfold/scruff                            # try it
 nix profile install github:hausfold/scruff                # keep it
 go install github.com/hausfold/scruff/cmd/scruff@latest   # or, with Go 1.26+
@@ -99,7 +100,7 @@ leases: [hausfold.co/docs/scruff/sdks](https://hausfold.co/docs/scruff/sdks/).
 - [`AGENTS.md`](./AGENTS.md) — hacking on scruff: the invariants, the frozen contracts, what `make check` doesn't cover
 - [`THANKS.md`](./THANKS.md) — the founding testers, and git and the Go libraries underneath it
 - [`SPEC.md`](SPEC.md) — the design of record, and the contracts that are frozen
-- [`docs/releasing.md`](docs/releasing.md) — how the CLI and all five SDKs are cut from one number
+- [`docs/releasing.md`](docs/releasing.md) — how the CLI, all five SDKs and the Homebrew formula move on one number
 - `scruff --help` — the exhaustive flag list
 
 ---
