@@ -4,12 +4,17 @@ name: release
 # ships, published from one number:
 #
 #   CLI          the GitHub release + source tarball (Nix consumers take the
-#                flake input; there is no binary to attach)
+#                flake input, Homebrew compiles the tarball; there is still no
+#                binary to attach)
 #   sdk/ts       npm            @hausfold/scruff
 #   sdk/python   PyPI           hausfold-scruff
 #   sdk/rust     crates.io      hausfold-scruff
 #   sdk/go       a `sdk/go/v<version>` tag — Go's proxy needs nothing else
 #   sdk/swift    a tag on the hausfold/scruff-swift mirror — SwiftPM likewise
+#
+# And one thing that is not an artifact but moves on the same number:
+# hausfold/homebrew-tap's `Formula/scruff.rb`, repointed at the new tag's source
+# tarball so `brew install hausfold/tap/scruff` is never a release behind.
 #
 # Cut tags with `bench release scruff <version>` from the workshop; it stamps the
 # version everywhere (script/stamp-version.sh), commits, pushes, tags, and then
@@ -32,10 +37,20 @@ name: release
 #   crates.io crates.io -> hausfold-scruff -> Settings -> Trusted Publishing
 #             repo `hausfold/scruff`, workflow `release.yml`
 #
-# The Swift mirror is the one that can't use OIDC — pushing to ANOTHER repo is
-# outside what this workflow's GITHUB_TOKEN can ever be scoped to. It needs a
-# fine-grained PAT with Contents: read+write on hausfold/scruff-swift, stored as
-# the repo secret MIRROR_TOKEN.
+# Two pushes here are to ANOTHER repo, which is outside what OIDC or this
+# workflow's GITHUB_TOKEN can ever be scoped to, so each needs a credential of
+# its own:
+#
+#   tap       a read-write DEPLOY KEY on hausfold/homebrew-tap, private half
+#             stored here as the repo secret TAP_DEPLOY_KEY. One keypair per
+#             releasing repo — pounce and perch each have their own, named
+#             "<repo> release workflow (TAP_DEPLOY_KEY)" on the tap — so that
+#             revoking one repo's access never touches the others.
+#
+#   mirror    a fine-grained PAT with Contents: read+write on
+#             hausfold/scruff-swift, stored here as the repo secret
+#             MIRROR_TOKEN. A deploy key would do as well; the PAT predates
+#             the tap job and there is no reason to churn it.
 #
 # Until a registry is wired, its job fails and the others still publish — the
 # jobs are deliberately independent, and every one of them is idempotent, so
@@ -244,3 +259,115 @@ jobs:
           git config user.email haus-release@users.noreply.github.com
           MIRROR_URL="https://x-access-token:$MIRROR_TOKEN@github.com/hausfold/scruff-swift.git" \
             sdk/swift/sync-mirror.sh --tag "${{ needs.stamp.outputs.version }}"
+
+  bump-tap:
+    name: bump hausfold/homebrew-tap
+    needs: [stamp, github-release]
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout turns a missing ssh-key into a git authentication
+      # failure against a public repo, which reads as anything but "the secret
+      # was never added". Say it plainly instead — this is the shape a fresh
+      # fork of scruff hits, and the header above is the fix.
+      - name: Is the deploy key here?
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          [ -n "$TAP_DEPLOY_KEY" ] || {
+            echo "::error::TAP_DEPLOY_KEY is unset — see this workflow's header for how to mint it." >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@v4
+        with:
+          repository: hausfold/homebrew-tap
+          # Write deploy key for the tap repo, stored as a secret here. The
+          # formula's url/sha256 lines are CI-owned; humans never bump them.
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+
+      - name: Point Formula/scruff.rb at the new tag
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VER="${{ needs.stamp.outputs.version }}"
+
+          # Bootstrapping order, once: the tap gets the formula by hand (its
+          # AGENTS.md allows exactly that), and this job takes over from the
+          # next release. Exiting 0 here means a tap that has not adopted
+          # scruff yet can never turn a published release red.
+          if [ ! -f Formula/scruff.rb ]; then
+            # ...but "absent" has a second meaning once the bootstrap is done:
+            # the formula moved. Homebrew's sharded `Formula/s/scruff.rb`
+            # layout is legal in a tap, and a rename or a shard would otherwise
+            # leave a GREEN release beside a tap frozen on the old tag — the
+            # worst outcome this job has, and the one no guard below can catch.
+            if find . -name scruff.rb -not -path './.git/*' | grep -q .; then
+              echo "::error::the tap has a scruff formula somewhere other than Formula/scruff.rb — this job's path is stale, fix it here"
+              exit 1
+            fi
+            echo "::notice::Formula/scruff.rb is not in the tap yet — bootstrap it by hand once, and this job keeps it current from the next release."
+            exit 0
+          fi
+
+          # GitHub generates this tarball on demand rather than storing it, and
+          # its bytes are only *promised* stable, not immutable the way a
+          # release asset is. The alternative is attaching our own source
+          # tarball and hashing that, which buys immutability and costs a
+          # second artifact to keep true; homebrew-core takes this same URL for
+          # thousands of formulae, so we do too, and we hash whatever it served
+          # us right here rather than trusting a value computed anywhere else.
+          URL="https://github.com/hausfold/scruff/archive/refs/tags/$TAG.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 5 -o /tmp/scruff-src.tar.gz "$URL"
+
+          # `curl -f` reads the status line, not the body: a truncated transfer
+          # or a redirect that served something else still hashes cleanly, and
+          # a wrong sha256 here means every `brew install hausfold/tap/scruff`
+          # fails a checksum until someone notices. Ask the archive for a file
+          # only scruff's tree has, at the path GitHub names it.
+          tar -tzf /tmp/scruff-src.tar.gz "scruff-$VER/go.mod" >/dev/null || {
+            echo "::error::$URL did not serve scruff $VER's source tree"
+            exit 1
+          }
+
+          SHA="$(sha256sum /tmp/scruff-src.tar.gz | cut -d' ' -f1)"
+
+          # Both patterns are anchored at BOTH ends, and that is the whole
+          # promise the tap's AGENTS.md makes about this sed: it rewrites a
+          # bare `url "…"` line or it rewrites nothing. A line that grew a
+          # second argument (`, using: :homebrew_curl`, a git url's `tag:` and
+          # `revision:`) would otherwise have that argument silently deleted,
+          # and the guards below would still pass because the new URL is there.
+          # Unanchored, the greedy `.*` eats it; anchored, the sed no-ops and
+          # the guards fail loudly, which is what they are for.
+          sed -i -E \
+            -e "s#^  url \"[^\"]*\"\$#  url \"$URL\"#" \
+            -e "s#^  sha256 \"[^\"]*\"\$#  sha256 \"$SHA\"#" \
+            Formula/scruff.rb
+
+          grep -qxF "  url \"$URL\"" Formula/scruff.rb || {
+            echo "::error::formula url did not move to $TAG — its shape changed, fix it by hand"
+            exit 1
+          }
+          grep -qxF "  sha256 \"$SHA\"" Formula/scruff.rb || {
+            echo "::error::formula sha256 did not move — its shape changed, fix it by hand"
+            exit 1
+          }
+          # A `version` line would now disagree with the URL on every release,
+          # and Homebrew reads the URL. There has never been one; this is the
+          # guard that keeps a well-meaning hand-edit from adding one.
+          if grep -qE '^  version "' Formula/scruff.rb; then
+            echo "::error::Formula/scruff.rb grew a version line — Homebrew scans it from the url, and the two will drift"
+            exit 1
+          fi
+
+          if git diff --quiet; then
+            echo "formula already current"
+            exit 0
+          fi
+          git config user.name "haus-release[bot]"
+          git config user.email "haus-release@users.noreply.github.com"
+          git commit -am "scruff ${VER}"
+          # pounce's and perch's releases push to this same branch, and one of
+          # them landing between our checkout and this push rejects it. Rebase
+          # once and retry, rather than ending a green release with a formula
+          # still on the old tag.
+          git push || { git pull --rebase origin main && git push; }
