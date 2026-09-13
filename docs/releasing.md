@@ -1,16 +1,18 @@
 # Releasing scruff
 
 Six artifacts out of one repository — the CLI plus five SDKs — all carrying the
-same version number. One tag publishes all of them.
+same version number. One tag publishes all of them, and moves one thing that is
+not an artifact: the Homebrew formula.
 
 | artifact | published as | how |
 |---|---|---|
-| CLI | the GitHub release + source tarball | Nix consumers take the flake input; there is no binary to attach |
+| CLI | the GitHub release + source tarball | Nix consumers take the flake input, Homebrew compiles the tarball; there is no binary to attach |
 | `sdk/ts` | npm `@hausfold/scruff` | `npm publish` over OIDC |
 | `sdk/python` | PyPI `hausfold-scruff` | `gh-action-pypi-publish` over OIDC |
 | `sdk/rust` | crates.io `hausfold-scruff` | `cargo publish` over OIDC |
 | `sdk/go` | `github.com/hausfold/scruff/sdk/go` | a `sdk/go/v<version>` tag — Go's proxy needs nothing else |
 | `sdk/swift` | `github.com/hausfold/scruff-swift` | a `<version>` tag on the mirror — SwiftPM likewise |
+| the tap | `hausfold/homebrew-tap`'s `Formula/scruff.rb` | `bump-tap` rewrites its `url` and `sha256` over a deploy key, so `brew install hausfold/tap/scruff` is never a release behind |
 
 ## Cutting one
 
@@ -63,10 +65,17 @@ script/stamp-version.sh --check <X.Y.Z>    # what CI runs against the pushed tag
 
 ## Bootstrapping a registry
 
-Publishing authenticates by OIDC — except the Swift mirror, which pushes to
-*another* repository and so needs the `MIRROR_TOKEN` PAT `release.yml`'s header
-describes, the one credential here that can expire. That header also carries the
-browser form each of the other three registries needs, and all three are wired.
+Publishing authenticates by OIDC — except the two jobs that push to *another*
+repository, which no OIDC token and no `GITHUB_TOKEN` of this repo can ever be
+scoped to. Each carries its own credential, both described in `release.yml`'s
+header: `MIRROR_TOKEN`, a PAT for the Swift mirror and the one credential here
+that can expire, and `TAP_DEPLOY_KEY`, a write deploy key on
+`hausfold/homebrew-tap`. The tap wants **its own keypair for this repo** rather
+than a copy of pounce's or perch's, so that revoking one never touches the
+others: mint one, put the public half on the tap as a read-write deploy key
+titled `scruff release workflow (TAP_DEPLOY_KEY)`, and the private half here as
+the repo secret. That header also carries the browser form each of the other
+three registries needs, and all three are wired.
 What it doesn't say is what adding a *new* package costs, because a trusted
 publisher matches on repo **and** package name — so a rename starts over, and
 none of the old entries carries across:
@@ -101,6 +110,10 @@ rather than half-cutting a second one:
 ```sh
 gh run rerun --failed --repo hausfold/scruff <run-id>
 ```
+
+`bump-tap` is idempotent on the same terms: it rewrites two lines to the values
+the tag implies and pushes only when they actually moved, so a rerun after a
+race or a missing secret finishes the job rather than committing twice.
 
 **Never respond to a failed publish by bumping the version** — that burns a
 number permanently on the registries that did succeed.
