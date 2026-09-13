@@ -475,8 +475,14 @@ common case, not the exotic one.
 ```
 identity = owner/name   from `git remote get-url origin`, scheme/user/host stripped
 path key = owner-name   (slug with '/' → '-')
-$SCRUFF_HOME/<owner-name>/<worktree-name>
+$SCRUFF_BASE/<owner-name>/<worktree-name>
 ```
+
+⚠️ **`SCRUFF_BASE` is the variable's name, and always was** — there is no
+`SCRUFF_HOME` and no `SCRUFF_REGISTRY`, the registry being `$SCRUFF_BASE/registry.tsv`.
+This block said `$SCRUFF_HOME` for long enough that someone sandboxing a test run
+against it set three variables scruff ignores and pointed their fake lanes at the
+real registry. `scruff doctor`'s `resolved from` line is the check that catches it.
 
 - No `origin`? Try `upstream`, then the first remote alphabetically, then fall
   back to `local/<basename>` and record `repo = null` in the registry — degraded,

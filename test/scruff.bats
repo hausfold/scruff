@@ -1260,12 +1260,31 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   [[ "$output" == *"+2 more"* ]] || fail "an uncapped note would be a screenful: $output"
 }
 
-@test "reap: keeps an unmerged checkout" {
+@test "reap: keeps an unmerged checkout, and NAMES it" {
   local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" unmerged)"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to reap"* ]]
+  # A lane still in flight used to fall out of the sweep having appended
+  # nothing, so reap printed one abstract line and never said which lane it
+  # meant. On a repo whose PRs scruff cannot see at all that is every lane.
+  [[ "$output" == *"kept"*"unmerged"* ]] || fail "the kept lane went unnamed: $output"
+  [[ "$output" == *"worktree-unmerged is not in"* ]] || fail "no reason given: $output"
+  [[ "$output" == *"scruff drop unmerged"* ]] || fail "no way out offered: $output"
   [ -e "$dir/.git" ]
+}
+
+@test "reap: the footer never points at lanes it did not print" {
+  # `nothing reaped — see above for what held each lane back` used to fire with
+  # nothing above it whenever the only lanes held back were in flight. On a repo
+  # scruff cannot ask a forge about — no remote, GitLab, sourcehut, a fork whose
+  # PRs live on upstream — that was the whole of `scruff reap`, every time.
+  local main; main="$(mkrepo alpha)"
+  mkwt "$main" inflight >/dev/null
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  if [[ "$output" == *"see above"* ]]; then
+    [[ "$output" == *"kept"* ]] || fail "footer pointed above at nothing: $output"
+  fi
 }
 
 @test "reap: never removes the checkout it is being run from" {
@@ -2657,7 +2676,7 @@ setcfg() { # setcfg <toml body> — plant the machine config
   local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" plain)"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"nothing to reap"* ]]      # unmerged: scruff's own rule held
+  [[ "$output" == *"kept"*"plain"* ]]         # unmerged: scruff's own rule held
   [ -e "$dir/.git" ]
 }
 
