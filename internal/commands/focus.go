@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/hausfold/scruff/internal/config"
@@ -112,7 +111,7 @@ func (e *Env) registryLane(want string) (Entry, bool) {
 		if strings.TrimPrefix(row.Branch, "worktree-") != name {
 			continue
 		}
-		if repo != "" && filepath.Base(row.Main) != repo {
+		if !repoMatches(row.Main, repo) {
 			continue
 		}
 		hits++

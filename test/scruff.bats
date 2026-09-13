@@ -208,7 +208,16 @@ EOF
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 mkrepo() { # mkrepo <name> — a main checkout on `main`, with a GitHub origin
-  local name="$1" main="$TMP/repos/$1"
+  mkrepo_as "$1" "acme/$1"
+}
+
+# mkrepo_as <path under $TMP/repos> <owner/name> — the same checkout, with the
+# directory and the remote slug said SEPARATELY. That split is the whole of
+# SPEC.md §4: a repo's identity is its slug, so the fixture for the collision
+# this file pins (two `api` directories under different orgs) has to be able to
+# disagree with itself about which is which.
+mkrepo_as() {
+  local main="$TMP/repos/$1" slug="$2"
   mkdir -p "$main"
   git -C "$main" init -q -b main
   git -C "$main" config commit.gpgsign false
@@ -216,7 +225,7 @@ mkrepo() { # mkrepo <name> — a main checkout on `main`, with a GitHub origin
   git -C "$main" add -A
   git -C "$main" commit -qm init
   # repo_slug parses this for `gh -R`; a real-looking URL keeps that path honest.
-  git -C "$main" remote add origin "https://github.com/acme/$name.git"
+  git -C "$main" remote add origin "https://github.com/$slug.git"
   printf '%s' "$main"
 }
 
@@ -262,7 +271,7 @@ fail() { printf '%s\n' "$*" >&2; return 1; }   # not a bats builtin
   local main; main="$(mkrepo alpha)"
   run bash -c "printf '{\"name\":\"sparkle\",\"cwd\":\"$main\"}' | '$WT' create 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "$CLAUDE_WT_BASE/alpha/sparkle" ]
+  [ "$output" = "$CLAUDE_WT_BASE/acme-alpha/sparkle" ]
   [ -e "$output/.git" ]
   [ "$(git -C "$output" branch --show-current)" = worktree-sparkle ]
 }
@@ -283,7 +292,7 @@ fail() { printf '%s\n' "$*" >&2; return 1; }   # not a bats builtin
 @test "create: a name whose branch already exists fails instead of half-creating" {
   local main; main="$(mkrepo alpha)"
   hook_create "$main" dup >/dev/null 2>&1
-  rm -rf "$CLAUDE_WT_BASE/alpha/dup"
+  rm -rf "$CLAUDE_WT_BASE/acme-alpha/dup"
   run bash -c "printf '{\"name\":\"dup\",\"cwd\":\"$main\"}' | '$WT' create"
   [ "$status" -ne 0 ]
   # NOTE: today this is a raw `git worktree add` error. cmd_child has friendly
@@ -971,7 +980,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   git -C "$main" merge -q --no-edit worktree-sweepme
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reaped sweepme (alpha)"* ]]
+  [[ "$output" == *"reaped sweepme (acme-alpha)"* ]]
   [ ! -e "$dir" ]
   [ "$(reg_rows)" -eq 0 ]
 }
@@ -994,7 +1003,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
 
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reaped sweepme (alpha)"* ]]
+  [[ "$output" == *"reaped sweepme (acme-alpha)"* ]]
   # The marker is gone, and so is the fin: its `Go to lane` action would run
   # `scruff focus` against a lane that no longer exists.
   [ ! -e "$asks/scruff.alpha.sweepme" ]
@@ -1035,7 +1044,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   export FAKE_LSOF_CWDS="$dir"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept busy (alpha) — something is standing in the checkout"* ]]
+  [[ "$output" == *"kept busy (acme-alpha) — something is standing in the checkout"* ]]
   [ -e "$dir/.git" ]
 }
 
@@ -1219,7 +1228,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" nothing)"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reaped nothing (alpha)"* ]] || fail "$output"
+  [[ "$output" == *"reaped nothing (acme-alpha)"* ]] || fail "$output"
   [ ! -e "$dir" ]
   [ "$(reg_rows)" -eq 0 ]
 }
@@ -1243,7 +1252,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   mkdir -p "$dir/live"; echo junk >"$dir/live/reaped.log"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept fossil (alpha)"* ]] || fail "the dirty lane went unnamed: $output"
+  [[ "$output" == *"kept fossil (acme-alpha)"* ]] || fail "the dirty lane went unnamed: $output"
   [[ "$output" == *"live/"* ]] || fail "the note didn't name the path in the way: $output"
   [[ "$output" == *"$dir"* ]] || fail "the note didn't say where to go look: $output"
   # And the generic line must NOT also fire — it reads as a second verdict.
@@ -1311,7 +1320,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   git -C "$main" merge -q --squash worktree-squashed && git -C "$main" commit -qm "squash merge"
   export FAKE_GH_MERGED=1 FAKE_GH_OID="$tip"
   cd "$TMP"; wt_run reap
-  [[ "$output" == *"reaped squashed (alpha)"* ]]
+  [[ "$output" == *"reaped squashed (acme-alpha)"* ]]
 }
 
 @test "reap: a merged PR whose SHA no longer matches the tip is left alone" {
@@ -1336,7 +1345,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   commit_in "$dir" post.txt "work done after the PR merged"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept outran (alpha) — merged PR #12, 1 commit(s) since"* ]] \
+  [[ "$output" == *"kept outran (acme-alpha) — merged PR #12, 1 commit(s) since"* ]] \
     || fail "reap kept the branch but never said why: $output"
   [[ "$output" == *"scruff reship outran"* ]] || fail "reap named no way out of it"
 }
@@ -1353,7 +1362,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   export FAKE_GH_BRANCH=worktree-diverged
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept diverged (alpha) — merged PR #12, but the tip isn't built on what merged"* ]] \
+  [[ "$output" == *"kept diverged (acme-alpha) — merged PR #12, but the tip isn't built on what merged"* ]] \
     || fail "reap kept the branch but blamed the wrong cause: $output"
   [[ "$output" != *"scruff reship diverged"* ]] \
     || fail "reap pointed a diverged (stale) branch at reship, which would push it: $output"
@@ -1379,7 +1388,7 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   export FAKE_GH_BRANCH=worktree-rebased
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept rebased (alpha) — merged PR #12, 1 commit(s) since"* ]] \
+  [[ "$output" == *"kept rebased (acme-alpha) — merged PR #12, 1 commit(s) since"* ]] \
     || fail "a rebased-past-a-squash lane was not read as new work: $output"
   [[ "$output" != *"isn't built on what merged"* ]] \
     || fail "reap told a correctly rebased lane to delete itself: $output"
@@ -1953,7 +1962,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   run bash -c "cd '$a' && '$WT' child '$b' cross 2>/dev/null"
   [ "$status" -eq 0 ]
   dir="$output"
-  [ "$dir" = "$CLAUDE_WT_BASE/beta/cross" ]
+  [ "$dir" = "$CLAUDE_WT_BASE/acme-beta/cross" ]
   [ "$(git -C "$dir" branch --show-current)" = worktree-cross ]
   # 5th registry field is the spawning cwd — this is what the statusline reads.
   [ "$(awk -F'\t' -v p="$dir" '$4==p{print $5}' "$REG")" = "$a" ]
@@ -1964,7 +1973,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   dir="$(mkwt "$a" shared)"
   run bash -c "cd '$dir' && '$WT' child '$b' 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "$CLAUDE_WT_BASE/beta/shared" ]
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/shared" ]
 }
 
 @test "child: a pane that is NOT in a lane gets a name, not its repo's" {
@@ -1974,7 +1983,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   run bash -c "cd '$a' && '$WT' child '$b' 2>/dev/null"
   [ "$status" -eq 0 ]
   dir="$output"
-  [ "$dir" != "$CLAUDE_WT_BASE/beta/alpha" ]
+  [ "$dir" != "$CLAUDE_WT_BASE/acme-beta/alpha" ]
   [[ "$(basename "$dir")" =~ ^[a-z]+-[a-z]+$ ]]
 }
 
@@ -2028,7 +2037,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   run bash -c "'$WT' spawn '$b' fix-the-notch 2>/dev/null"
   [ "$status" -eq 0 ]
   dir="$output"
-  [ "$dir" = "$CLAUDE_WT_BASE/beta/fix-the-notch" ]
+  [ "$dir" = "$CLAUDE_WT_BASE/acme-beta/fix-the-notch" ]
   [ "$(git -C "$dir" branch --show-current)" = worktree-fix-the-notch ]
   # Parent is the repo's own main checkout — a pane sitting there lists it.
   [ "$(awk -F'\t' -v p="$dir" '$4==p{print $5}' "$REG")" = "$b" ]
@@ -2040,8 +2049,8 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   run bash -c "'$WT' spawn '$b' dupe 2>/dev/null"
   [ "$status" -eq 0 ]
   second="$output"
-  [ "$first" = "$CLAUDE_WT_BASE/beta/dupe" ]
-  [ "$second" = "$CLAUDE_WT_BASE/beta/dupe-2" ]
+  [ "$first" = "$CLAUDE_WT_BASE/acme-beta/dupe" ]
+  [ "$second" = "$CLAUDE_WT_BASE/acme-beta/dupe-2" ]
   [ "$(git -C "$second" branch --show-current)" = worktree-dupe-2 ]
 }
 
@@ -2050,7 +2059,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   git -C "$b" branch worktree-held
   run bash -c "'$WT' spawn '$b' held 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "$CLAUDE_WT_BASE/beta/held-2" ]
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/held-2" ]
 }
 
 @test "spawn: records its client, independently of the future default" {
@@ -2071,7 +2080,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   cd "$b"
   run "$WT" new pi-task pi
   [ "$status" -eq 0 ]
-  dir="$CLAUDE_WT_BASE/beta/pi-task"
+  dir="$CLAUDE_WT_BASE/acme-beta/pi-task"
   [ "$(awk -F'\t' -v p="$dir" '$4==p{print $6}' "$REG")" = pi ]
   [[ "$output" == *"ran pi"* ]]
 
@@ -2082,7 +2091,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
 }
 
 @test "resume: pre-client registry rows remain Claude worktrees" {
-  local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/alpha/legacy"
+  local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/acme-alpha/legacy"
   git -C "$main" branch worktree-legacy
   mkdir -p "$(dirname "$REG")"
   printf 'legacy\t%s\tworktree-legacy\t%s\t%s\n' "$main" "$dir" "$main" >"$REG"
@@ -2092,7 +2101,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
 }
 
 @test "resume: a row naming a retired client reopens in Claude" {
-  local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/alpha/retired"
+  local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/acme-alpha/retired"
   git -C "$main" branch worktree-retired
   mkdir -p "$(dirname "$REG")"
   printf 'retired\t%s\tworktree-retired\t%s\t%s\tjcode\n' "$main" "$dir" "$main" >"$REG"
@@ -2156,7 +2165,7 @@ EOF
   cd "$b"
   run "$WT" new notch-fix opencode
   [ "$status" -eq 0 ]
-  dir="$CLAUDE_WT_BASE/beta/notch-fix"
+  dir="$CLAUDE_WT_BASE/acme-beta/notch-fix"
   [ -e "$dir/.git" ]
   [ "$(git -C "$dir" branch --show-current)" = worktree-notch-fix ]
   # Parent is the PANE's cwd (as the create hook records it), not the repo, and
@@ -2172,7 +2181,7 @@ EOF
   cd "$b"
   run "$WT" new quiet-one
   [ "$status" -eq 0 ]
-  dir="$CLAUDE_WT_BASE/beta/quiet-one"
+  dir="$CLAUDE_WT_BASE/acme-beta/quiet-one"
   [ -e "$dir/.git" ]
   # Only the path on stdout, so `cd "$(scruff new)"` works — and NO client ran:
   # a lane is a checkout, and what you open in it is your business.
@@ -2197,7 +2206,7 @@ EOF
   [[ "$stderr" == *"git submodule update --init --recursive"* ]] || fail "no fix named: $stderr"
   # The note is stderr and ONLY stderr (SPEC 2.3): a word of it on stdout and
   # `cd "$(scruff new)"` — the documented use — cds into the warning.
-  [ "$output" = "$CLAUDE_WT_BASE/gamma/subs" ] || fail "stdout is not the path alone: $output"
+  [ "$output" = "$CLAUDE_WT_BASE/acme-gamma/subs" ] || fail "stdout is not the path alone: $output"
   dir="$output"
   [ -e "$dir/.gitmodules" ]
 
@@ -2207,7 +2216,7 @@ EOF
   run --separate-stderr "$WT" child "$g" kid
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"git submodule update --init --recursive"* ]] || fail "child stayed quiet: $stderr"
-  [ "$output" = "$CLAUDE_WT_BASE/gamma/kid" ]
+  [ "$output" = "$CLAUDE_WT_BASE/acme-gamma/kid" ]
 
   run --separate-stderr "$WT" spawn "$g" sown
   [ "$status" -eq 0 ]
@@ -2285,7 +2294,7 @@ EOF
   run env SCRUFF_PATH_RESCUE=0 PATH="$BIN:$TMP/onlygit" "$WT" new stranded codex
   [ "$status" -ne 0 ]
   [[ "$output" == *"codex is unavailable"* ]]
-  [ -e "$CLAUDE_WT_BASE/beta/stranded/.git" ]
+  [ -e "$CLAUDE_WT_BASE/acme-beta/stranded/.git" ]
 }
 
 @test "spawn: refuses a missing path, a non-repo, and a missing name" {
@@ -2466,7 +2475,7 @@ EOF
   local main out
   main="$(mkrepo alpha)"
   out="$(printf '{"name":"barepath","cwd":"%s"}' "$main" | env -u PATH "$WT" create 2>/dev/null)"
-  [ "$out" = "$CLAUDE_WT_BASE/alpha/barepath" ]
+  [ "$out" = "$CLAUDE_WT_BASE/acme-alpha/barepath" ]
   [ -e "$out/.git" ]
   [ "$(git -C "$out" branch --show-current)" = worktree-barepath ]
 }
@@ -2505,7 +2514,7 @@ EOF
   [ "$status" -eq 0 ]
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"kept leased (alpha) — something is standing in the checkout"* ]]
+  [[ "$output" == *"kept leased (acme-alpha) — something is standing in the checkout"* ]]
   # A lease knows the pid but never the command, so the provider stands in.
   [[ "$output" == *"pid $$ (leases)"* ]] || fail "$output"
   [ -e "$dir/.git" ]
@@ -2520,7 +2529,7 @@ EOF
   wt_run heartbeat "$dir"
   [ "$status" -eq 0 ]
   cd "$TMP"; wt_run reap
-  [[ "$output" == *"reaped ephemeral (alpha)"* ]]
+  [[ "$output" == *"reaped ephemeral (acme-alpha)"* ]]
 }
 
 @test "heartbeat: --release drops the lease and the checkout reaps" {
@@ -2530,7 +2539,7 @@ EOF
   wt_run heartbeat "$dir" --release
   [ "$status" -eq 0 ]
   cd "$TMP"; wt_run reap
-  [[ "$output" == *"reaped transient (alpha)"* ]]
+  [[ "$output" == *"reaped transient (acme-alpha)"* ]]
   [ ! -e "$dir" ]
 }
 
@@ -2545,7 +2554,7 @@ EOF
   wt_run heartbeat "$dir" --pid "$dead"
   [ "$status" -eq 0 ]
   cd "$TMP"; wt_run reap
-  [[ "$output" == *"reaped ghost (alpha)"* ]]
+  [[ "$output" == *"reaped ghost (acme-alpha)"* ]]
 }
 
 @test "heartbeat: leases never vouch for an EMPTY checkout — no lsof still degrades" {
@@ -2579,8 +2588,8 @@ EOF
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
   [[ "$output" != *"no lsof"* ]] || fail "leases should have answered: $output"
-  [[ "$output" == *"reaped free (beta)"* ]]
-  [[ "$output" == *"kept held (alpha) — something is standing in the checkout"* ]]
+  [[ "$output" == *"reaped free (acme-beta)"* ]]
+  [[ "$output" == *"kept held (acme-alpha) — something is standing in the checkout"* ]]
   [ -e "$held/.git" ]
 }
 
@@ -2748,7 +2757,7 @@ setcfg() { # setcfg <toml body> — plant the machine config
 landed = \"$hook\""
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"reaped trainlanded (alpha)"* ]] || fail "the landed hook did not decide: $output"
+  [[ "$output" == *"reaped trainlanded (acme-alpha)"* ]] || fail "the landed hook did not decide: $output"
   [ ! -e "$dir" ]
   run git -C "$main" show-ref -q --verify refs/heads/worktree-trainlanded
   [ "$status" -ne 0 ]
@@ -2773,7 +2782,7 @@ landed = \"$hook\""
   setcfg "[hooks]
 landed = \"$hook\""
   cd "$TMP"; wt_run reap
-  [[ "$output" == *"reaped deferred (alpha)"* ]] || fail "defer did not fall through: $output"
+  [[ "$output" == *"reaped deferred (acme-alpha)"* ]] || fail "defer did not fall through: $output"
 }
 
 @test "hooks: landed — a hook that cannot run warns and falls back, never fails" {
@@ -2784,7 +2793,7 @@ landed = "/nonexistent/scruff-landed"'
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"wouldn't run"* ]] || fail "a dead hook must say so: $output"
-  [[ "$output" == *"reaped broken (alpha)"* ]] || fail "a dead hook must not cost the sweep: $output"
+  [[ "$output" == *"reaped broken (acme-alpha)"* ]] || fail "a dead hook must not cost the sweep: $output"
 }
 
 @test "hooks: preserve — it decides whether a closing pane's dirt becomes a wip commit" {
@@ -2909,7 +2918,7 @@ open = \"$hook\""
   cd "$main"; wt_run new fresh --open
   [ "$status" -eq 0 ]
   [ "$(cat "$TMP/opened")" = "fresh claude" ] || fail "open payload is wrong: $(cat "$TMP/opened")"
-  [ -e "$CLAUDE_WT_BASE/alpha/fresh/.git" ]
+  [ -e "$CLAUDE_WT_BASE/acme-alpha/fresh/.git" ]
 }
 
 # ── --prompt: a lane that opens already knowing the task ─────────────────────
@@ -2933,7 +2942,7 @@ EOF
 open = \"$hook\""
   run bash -c "'$WT' spawn '$b' notch-flicker --prompt 'fix the notch' 2>/dev/null"
   [ "$status" -eq 0 ]
-  [ "$output" = "$CLAUDE_WT_BASE/beta/notch-flicker" ]   # the path is still the stdout contract
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/notch-flicker" ]   # the path is still the stdout contract
   # `--` before the prompt, always: a task beginning with a dash is a FLAG to
   # commander and clap otherwise, and dies before the pane draws anything.
   [ "$(cat "$TMP/cmd")" = "claude -- 'fix the notch'" ] || fail "wrong invocation: $(cat "$TMP/cmd")"
@@ -2967,7 +2976,7 @@ $(cat "$TMP/argv")"
   # 3, not 1: scruff made the lane it was asked for. What was unavailable is
   # somewhere to open it, and the caller needs to tell those two apart.
   [ "$status" -eq 3 ]
-  [ -e "$CLAUDE_WT_BASE/beta/orphan/.git" ]
+  [ -e "$CLAUDE_WT_BASE/acme-beta/orphan/.git" ]
   [[ "$output" == *"claude -- 'do the thing'"* ]] || fail "no recovery command: $output"
 }
 
@@ -2992,7 +3001,7 @@ open = \"$hook\""
   : >"$TMP/empty.md"
   run "$WT" spawn "$b" nothing --prompt-file "$TMP/empty.md"
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/beta/nothing" ] || fail "a lane was created for a prompt that isn't there"
+  [ ! -e "$CLAUDE_WT_BASE/acme-beta/nothing" ] || fail "a lane was created for a prompt that isn't there"
   run "$WT" spawn "$b" nofile --prompt-file "$TMP/does-not-exist.md"
   [ "$status" -eq 1 ]
 }
@@ -3008,7 +3017,7 @@ open = \"$hook\""
 
   run bash -c "'$WT' spawn '$b' quoting --prompt '--help' 2>/dev/null"
   [ "$status" -eq 0 ] || fail "a task starting with a flag was read as help: $status"
-  [ -e "$CLAUDE_WT_BASE/beta/quoting/.git" ]
+  [ -e "$CLAUDE_WT_BASE/acme-beta/quoting/.git" ]
   [[ "$(cat "$TMP/cmd")" == *"--help"* ]] || fail "the task did not reach the client: $(cat "$TMP/cmd")"
 }
 
@@ -3036,7 +3045,7 @@ open = \"$hook\""
 open = \"$hook\""
   run bash -c "'$WT' spawn '$b' broken --prompt 'do the thing'"
   [ "$status" -eq 3 ] || fail "a broken opener must not read as a bad invocation: $status"
-  [ -e "$CLAUDE_WT_BASE/beta/broken/.git" ]
+  [ -e "$CLAUDE_WT_BASE/acme-beta/broken/.git" ]
   [[ "$output" == *"claude -- 'do the thing'"* ]] || fail "no recovery command: $output"
 }
 
@@ -3057,17 +3066,17 @@ open = \"$hook\""
   local b; b="$(mkrepo beta)"
   run "$WT" spawn "$b" "" claude
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/beta/claude" ] || fail "the agent id became the lane name"
+  [ ! -e "$CLAUDE_WT_BASE/acme-beta/claude" ] || fail "the agent id became the lane name"
 }
 
 @test "prompt: an empty --prompt is refused, like an empty --prompt-file" {
   local b main; b="$(mkrepo beta)"; main="$(mkrepo alpha)"
   run "$WT" spawn "$b" blank --prompt ""
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/beta/blank" ]
+  [ ! -e "$CLAUDE_WT_BASE/acme-beta/blank" ]
   cd "$main"; wt_run new blank --prompt "   "
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/alpha/blank" ]
+  [ ! -e "$CLAUDE_WT_BASE/acme-alpha/blank" ]
 }
 
 @test "prompt: --image with no first turn to look at it is refused" {
@@ -3077,7 +3086,7 @@ open = \"$hook\""
   : >"$TMP/shot.png"
   cd "$main"; wt_run new shotless --open --image "$TMP/shot.png"
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/alpha/shotless" ]
+  [ ! -e "$CLAUDE_WT_BASE/acme-alpha/shotless" ]
   run "$WT" spawn "$b" shotless --image "$TMP/shot.png"
   [ "$status" -eq 1 ]
 }
@@ -3118,7 +3127,7 @@ open = \"$hook\""
   local main; main="$(mkrepo alpha)"
   cd "$main"; wt_run new clash --cmd 'echo hi' --prompt 'do it'
   [ "$status" -eq 1 ]
-  [ ! -e "$CLAUDE_WT_BASE/alpha/clash" ]
+  [ ! -e "$CLAUDE_WT_BASE/acme-alpha/clash" ]
 }
 
 # ── namer: a lane named after its task ───────────────────────────────────────
@@ -3167,8 +3176,8 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
   setcfg 'namer = "fake"'
   run bash -c "'$WT' spawn '$b' --prompt 'the bar draws a draft PR in the merged colour' 2>/dev/null"
   [ "$status" -eq 3 ]
-  [ "$output" = "$CLAUDE_WT_BASE/beta/mobile-nav-jitter" ] || fail "lane is at $output"
-  [ -d "$CLAUDE_WT_BASE/beta/mobile-nav-jitter" ]
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/mobile-nav-jitter" ] || fail "lane is at $output"
+  [ -d "$CLAUDE_WT_BASE/acme-beta/mobile-nav-jitter" ]
   git -C "$b" show-ref -q --verify refs/heads/worktree-mobile-nav-jitter
 
   run cat "$TMP/req"
@@ -3185,7 +3194,7 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
   setcfg 'namer = "fake"'
 
   run bash -c "'$WT' spawn '$b' notch-flicker --prompt 'fix the notch' 2>/dev/null"
-  [ "$output" = "$CLAUDE_WT_BASE/beta/notch-flicker" ] || fail "the namer overrode a given name: $output"
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/notch-flicker" ] || fail "the namer overrode a given name: $output"
   [ ! -e "$TMP/ran" ] || fail "the namer ran for a lane that already had a name"
 
   # No task, nothing to name after: `scruff new` on its own must not start a
@@ -3203,7 +3212,7 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
   mknamer 'touch "'"$TMP"'/ran"; echo mobile-nav-jitter'
   setcfg 'namer = "fake"'
   run bash -c "'$WT' spawn '$b' --derived-name notch-flicker --prompt 'fix the notch' 2>/dev/null"
-  [ "$output" = "$CLAUDE_WT_BASE/beta/notch-flicker" ] || fail "the namer overrode a derived name: $output"
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/notch-flicker" ] || fail "the namer overrode a derived name: $output"
   [ ! -e "$TMP/ran" ] || fail "the namer ran for a lane that already had a name"
 }
 
@@ -3247,7 +3256,7 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
     mknamer "printf '%s\n' '$answer'"
     run bash -c "'$WT' spawn '$b' --prompt 'fix the notch' 2>/dev/null"
     [ "$status" -eq 3 ] || fail "spawn failed on answer '$answer': $output"
-    [[ "$(dirname "$output")" = "$CLAUDE_WT_BASE/beta" ]] || fail "'$answer' escaped to $output"
+    [[ "$(dirname "$output")" = "$CLAUDE_WT_BASE/acme-beta" ]] || fail "'$answer' escaped to $output"
     is_random_name "$(lane_name "$output")" || fail "'$answer' became $(lane_name "$output")"
   done
   [ ! -e "/tmp/scruff-namer-escape" ]
@@ -3269,7 +3278,7 @@ is_random_name() { [[ "$1" =~ ^[a-z]+-[a-z]+(-[0-9]+)?$ ]]; }
   setcfg 'namer = "fake"'
   run bash -c "'$WT' spawn '$b' --prompt-file - <'$TMP/brief.md' 2>/dev/null"
   [ "$status" -eq 3 ]
-  [ "$output" = "$CLAUDE_WT_BASE/beta/draft-pr-grey" ] || fail "lane is at $output"
+  [ "$output" = "$CLAUDE_WT_BASE/acme-beta/draft-pr-grey" ] || fail "lane is at $output"
   [ ! -s "$TMP/stdin" ] || fail "the namer was handed scruff's stdin: $(cat "$TMP/stdin")"
 }
 
@@ -3595,7 +3604,7 @@ teardown() {
   [ "$status" -eq 2 ] || fail "want exit 2 (refused for safety), got $status: $output"
   [[ "$output" == *"pid 4001 node"* ]] || fail "the refusal named no witness: $output"
   # Invariant 2 applied to scruff's own migration: nothing moved.
-  [ -d "$HOME/.cache/claude-worktrees/alpha/sparkle" ]
+  [ -d "$HOME/.cache/claude-worktrees/acme-alpha/sparkle" ]
   [ ! -d "$HOME/.cache/scruff" ]
 }
 
@@ -3639,11 +3648,11 @@ teardown() {
   local newreg; newreg="$HOME/.cache/scruff/registry.tsv"
   [ -e "$newreg" ] || fail "no registry at the new base"
   [ -e "$newreg.bak.relocate" ] || fail "no .bak.relocate behind the rewrite"
-  grep -q "$HOME/.cache/scruff/alpha/sparkle" "$newreg" || fail "registry paths were not rewritten: $(cat "$newreg")"
+  grep -q "$HOME/.cache/scruff/acme-alpha/sparkle" "$newreg" || fail "registry paths were not rewritten: $(cat "$newreg")"
   ! grep -q "$HOME/.cache/claude-worktrees/" "$newreg" || fail "a stale path survived the rewrite"
 
   # The checkout moved with the tree, still a worktree of its repo, clean.
-  local moved; moved="$HOME/.cache/scruff/alpha/sparkle"
+  local moved; moved="$HOME/.cache/scruff/acme-alpha/sparkle"
   [ -e "$moved/.git" ] || fail "the checkout didn't move"
   [ "$(git -C "$moved" branch --show-current)" = worktree-sparkle ]
   # The link survived the move, in BOTH directions: the moved checkout still
@@ -3685,7 +3694,7 @@ teardown() {
 
   cd "$TMP"; wt_run doctor --migrate-base
   [ "$status" -eq 3 ] || fail "want exit 3 (degraded), got $status: $output"
-  [ -e "$HOME/.cache/scruff/alpha/broken/work.txt" ] || fail "the work did not move with the tree"
+  [ -e "$HOME/.cache/scruff/acme-alpha/broken/work.txt" ] || fail "the work did not move with the tree"
   [[ "$output" == *"work moved with the tree"* ]] || fail "the degraded path didn't say the work is safe: $output"
   [ -L "$HOME/.cache/claude-worktrees" ] || fail "the move completed but the symlink is missing"
 }
@@ -4110,7 +4119,7 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   [ "$status" -eq 1 ] || fail "expected a usage error, got $status: $output"
   [[ "$output" == *"both name the lane"* ]] \
     || fail "the refusal must say the two spellings collide: $output"
-  [ "$(ls "$CLAUDE_WT_BASE/alpha" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
+  [ "$(ls "$CLAUDE_WT_BASE/acme-alpha" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] \
     || fail "nothing may be created on a usage error"
 }
 
@@ -4140,14 +4149,14 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
   wt_run spawn "$main" --derived-name -----------------------------------
   [ "$status" -eq 1 ] || fail "an all-separator derived name must be refused: $output"
   [[ "$output" == *"cannot start a lane name"* ]] || fail "$output"
-  [ ! -e "$CLAUDE_WT_BASE/alpha/.git" ] || fail "a lane was created at the bucket root"
+  [ ! -e "$CLAUDE_WT_BASE/acme-alpha/.git" ] || fail "a lane was created at the bucket root"
   run git -C "$main" show-ref -q --verify refs/heads/worktree-
   [ "$status" -ne 0 ] || fail "a `worktree-` branch was made"
 
   # And a leading hyphen, which every later verb reads as a flag.
   wt_run spawn "$main" --derived-name -foo
   [ "$status" -eq 1 ] || fail "a leading-hyphen derived name must be refused: $output"
-  [ ! -d "$CLAUDE_WT_BASE/alpha/-foo" ]
+  [ ! -d "$CLAUDE_WT_BASE/acme-alpha/-foo" ]
 }
 
 @test "derived-name: the third positional is still the client, in either order" {
@@ -4204,4 +4213,92 @@ tart_lane() { # tart_lane <name> — a lane with a checkout, and the knobs setup
     || fail "the lane landed on the bucket itself: $output"
   run git -C "$beta" show-ref -q --verify refs/heads/worktree-
   [ "$status" -ne 0 ] || fail "an empty lane name reached a branch"
+}
+
+# ── repo identity: the remote slug, not the basename (SPEC.md §4) ─────────────
+#
+# One fixture throughout, and it is the collision as it actually turns up: two
+# unrelated repos cloned into directories that happen to share a name. Keyed on
+# the basename, all of this was one repo as far as scruff was concerned — one
+# bucket, one repo cell, one selector — and which of the two a verb acted on
+# came down to the order `discover` reached them in.
+
+twinrepos() { # twinrepos — two `api` checkouts that are not the same repo at all
+  A="$(mkrepo_as orgA/api antirez/kilo)"
+  B="$(mkrepo_as orgB/api gitlab-org/cli)"
+}
+
+@test "identity: two repos sharing a basename get a bucket each, keyed on the slug" {
+  twinrepos
+  local one two; one="$(mkwt "$A" one)"; two="$(mkwt "$B" two)"
+  [ "$one" = "$CLAUDE_WT_BASE/antirez-kilo/one" ] || fail "orgA/api landed at $one"
+  [ "$two" = "$CLAUDE_WT_BASE/gitlab-org-cli/two" ] || fail "orgB/api landed at $two"
+}
+
+@test "identity: a lane name free in THIS repo is not renamed by one in the other" {
+  # The symptom the shared bucket produced: `dup` existed in the other `api`, so
+  # its checkout path was taken, so the collision suffix fired in a repo where
+  # nothing called `dup` had ever existed.
+  twinrepos
+  mkwt "$A" dup >/dev/null
+  local second; second="$("$WT" spawn "$B" dup 2>/dev/null)"
+  [ "$(basename "$second")" = dup ] || fail "renamed to $(basename "$second")"
+  [ "$second" = "$CLAUDE_WT_BASE/gitlab-org-cli/dup" ] || fail "landed at $second"
+}
+
+@test "identity: a selector that fits two repos is refused, naming both, not guessed" {
+  twinrepos
+  mkwt "$A" dup >/dev/null; mkwt "$B" dup >/dev/null
+  # `api` is the basename of both, and used to resolve to whichever came first —
+  # from inside orgB/api it rebuilt the checkout in antirez/kilo.
+  wt_run resume api/dup
+  [ "$status" -ne 0 ] || fail "api/dup resolved to something: $output"
+  [[ "$output" == *"antirez-kilo/dup"* ]] && [[ "$output" == *"gitlab-org-cli/dup"* ]] \
+    || fail "the refusal named neither candidate: $output"
+  # The slug is what tells them apart, and a prefix of it is enough.
+  wt_run resume gitlab-org-cli/dup
+  [ "$status" -eq 0 ] || fail "the qualified spelling failed: $output"
+  wt_run resume antirez/dup
+  [ "$status" -eq 0 ] || fail "a prefix of the key failed: $output"
+}
+
+@test "identity: the repo cell is the name alone until two repos need telling apart" {
+  # Presentation, not identity: a column that spends nine characters on
+  # `hausfold-` on every row cuts to `hausf…` in a narrow pane, which is less
+  # than the basename told you. It grows only where it has to.
+  local a; a="$(mkrepo alpha)"
+  mkwt "$a" solo >/dev/null
+  wt_run list
+  echo "$output" | grep -Eq '[^-]alpha +solo' || fail "not the short cell: $output"
+  local b; b="$(mkrepo_as other/alpha other/alpha)"
+  mkwt "$b" twin >/dev/null
+  wt_run list
+  echo "$output" | grep -Eq 'acme-alpha +solo' || fail "the cell never grew: $output"
+  echo "$output" | grep -Eq 'other-alpha +twin' || fail "the cell never grew: $output"
+}
+
+@test "identity: a registry row keeps the bucket it was created in" {
+  # §4's Migration paragraph: rows written before the slug landed keep their
+  # path and still resume, because no command parses identity out of one.
+  local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/alpha/before"
+  git -C "$main" branch worktree-before
+  mkdir -p "$(dirname "$REG")"
+  printf 'before\t%s\tworktree-before\t%s\t%s\tclaude\n' "$main" "$dir" "$main" >"$REG"
+  wt_run resume before
+  [ "$status" -eq 0 ] || fail "a legacy row stopped resuming: $output"
+  [ -e "$dir/.git" ] || fail "the checkout was rebuilt somewhere else: $(cat "$REG")"
+  [ ! -e "$CLAUDE_WT_BASE/acme-alpha/before" ] || fail "a live row was moved to the slug bucket"
+}
+
+@test "identity: a repo with no remote falls back to local/<basename>, and still works" {
+  local main="$TMP/repos/nowhere"
+  mkdir -p "$main"
+  git -C "$main" init -q -b main
+  git -C "$main" config commit.gpgsign false
+  echo hi >"$main/README.md"; git -C "$main" add -A
+  git -C "$main" -c commit.gpgsign=false commit -qm init
+  local dir; dir="$(hook_create "$main" orphaned)"
+  [ "$dir" = "$CLAUDE_WT_BASE/local-nowhere/orphaned" ] || fail "landed at $dir"
+  wt_run resume nowhere/orphaned
+  [ "$status" -eq 0 ] || fail "the basename no longer resolves it: $output"
 }

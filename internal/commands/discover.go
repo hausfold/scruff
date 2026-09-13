@@ -56,7 +56,13 @@ func (e Entry) Name() string { return strings.TrimPrefix(e.Branch, "worktree-") 
 
 // Label is how a lane is named to a human: `<name> (<repo>)`. Lanes of the same
 // name in two repos are ordinary here, so the repo is never decoration.
-func (e Entry) Label() string { return e.Name() + " (" + filepath.Base(e.Main) + ")" }
+//
+// The full key, where the listing's cell shortens to the repo's name
+// (repoCells). The asymmetry is deliberate: a cell is one of a column the
+// reader is comparing, while this labels a single line about work being
+// deleted or kept back, where "reaped dup (api)" with two `api` repos on the
+// machine is exactly the sentence nobody can act on.
+func (e Entry) Label() string { return e.Name() + " (" + repoKey(e.Main) + ")" }
 
 // discover returns every resumable or live lane, deduped.
 //
@@ -136,7 +142,7 @@ func (e *Env) discover() []Entry {
 			continue
 		}
 		for _, b := range gitx.Lines(out) {
-			add(m, b, filepath.Join(e.Base, filepath.Base(m), strings.TrimPrefix(b, "worktree-")))
+			add(m, b, filepath.Join(e.Base, repoKey(m), strings.TrimPrefix(b, "worktree-")))
 		}
 	}
 

@@ -2,7 +2,6 @@ package commands
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/hausfold/scruff/internal/exitcode"
@@ -45,11 +44,8 @@ func (e *Env) matchLane(want, verb string) (Entry, error) {
 		if !e.branchAlive(entry) {
 			continue
 		}
-		if repo != "" {
-			r := filepath.Base(entry.Main)
-			if r != repo && !strings.HasPrefix(r, repo) {
-				continue
-			}
+		if !repoMatches(entry.Main, repo) {
+			continue
 		}
 		switch {
 		case entry.Name() == name:
@@ -59,14 +55,22 @@ func (e *Env) matchLane(want, verb string) (Entry, error) {
 		}
 	}
 
-	qualified := func(m Entry) string { return filepath.Base(m.Main) + "/" + m.Name() }
+	qualified := func(m Entry) string { return repoKey(m.Main) + "/" + m.Name() }
 	switch {
 	case len(exact) == 1:
 		return exact[0], nil
 	case len(exact) > 1:
-		return Entry{}, exitcode.Usagef("'%s' exists in more than one repo — qualify it: %s <repo>/%s", name, verb, name)
+		// Naming them is not decoration: since the repo half became the remote
+		// slug, `api/dup` can match two repos whose checkouts are both called
+		// `api`, and the whole point of refusing is that the user can now see
+		// WHICH two and type the one they meant.
+		labels := make([]string, 0, len(exact))
+		for _, m := range exact {
+			labels = append(labels, qualified(m))
+		}
+		return Entry{}, exitcode.Usagef("'%s' exists in more than one repo — qualify it: %s %s", name, verb, strings.Join(labels, " | "))
 	case len(prefix) == 1:
-		ui.Say("'%s' is '%s' in %s — matched by prefix", want, prefix[0].Name(), filepath.Base(prefix[0].Main))
+		ui.Say("'%s' is '%s' in %s — matched by prefix", want, prefix[0].Name(), repoKey(prefix[0].Main))
 		return prefix[0], nil
 	case len(prefix) > 1:
 		labels := make([]string, 0, len(prefix))

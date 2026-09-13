@@ -69,7 +69,7 @@ func (e *Env) noteReaped(main, branch string, v Verdict) {
 	}
 	entry := ledgerEntry{
 		When:   time.Now().UTC().Format(time.RFC3339),
-		Repo:   filepath.Base(main),
+		Repo:   repoKey(main),
 		Name:   strings.TrimPrefix(branch, "worktree-"),
 		Branch: branch,
 		SHA:    sha,

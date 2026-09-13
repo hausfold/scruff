@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,7 +43,7 @@ func (e *Env) Park(label string) error {
 	if dirty == "" {
 		if isLane {
 			return exitcode.Refusedf("'%s' is a lane in %s, not a label — park works on the checkout you're standing in, and %s is clean here. %s",
-				label, filepath.Base(elsewhere.Main), branch, parkThere(elsewhere))
+				label, repoKey(elsewhere.Main), branch, parkThere(elsewhere))
 		}
 		ui.Say("nothing to park — %s is already clean.", branch)
 		return nil
@@ -68,7 +67,7 @@ func (e *Env) Park(label string) error {
 	// meant as a target.
 	if isLane {
 		ui.Warn("'%s' is also a lane in %s — this parked %s here, not that lane. %s",
-			label, filepath.Base(elsewhere.Main), branch, parkThere(elsewhere))
+			label, repoKey(elsewhere.Main), branch, parkThere(elsewhere))
 	}
 	ui.Say("bring them back with: scruff unpark")
 	return nil
@@ -98,7 +97,7 @@ func (e *Env) laneNamed(label, top string) (registry.Row, bool) {
 		if r.Name != name || r.Path == top {
 			continue
 		}
-		if repo != "" && !strings.HasPrefix(filepath.Base(r.Main), repo) {
+		if !repoMatches(r.Main, repo) {
 			continue
 		}
 		return r, true

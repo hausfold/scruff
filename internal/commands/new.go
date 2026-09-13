@@ -301,7 +301,7 @@ func (e *Env) Child(target, want string) error {
 		}
 		if gitx.HasBranch(main, "worktree-"+want) {
 			return exitcode.Usagef("branch worktree-%s already exists in %s — pass another name: scruff child %s <name>",
-				want, filepath.Base(main), target)
+				want, repoKey(main), target)
 		}
 	}
 	if err := e.addWorktree(main, want, dir); err != nil {
@@ -678,35 +678,21 @@ func (e *Env) mainCheckoutOf(path string, here bool) (string, error) {
 	return main, nil
 }
 
-// bucketFor is the directory a repo's worktrees live under.
+// bucketFor is the directory a repo's worktrees live under: its repoKey,
+// unconditionally (SPEC.md §4).
 //
-// The repo's basename, EXCEPT when that would collide with the spawning pane's
-// own repo basename (the nested case: a workshop named `haus` holding a
-// child repo also named `haus`) — then the full owner-repo slug, so the child
-// never lands on the parent's own checkout path.
+// It used to be the basename with one escape hatch — the slug, but only when
+// the basename collided with the SPAWNING PANE's own repo (a workshop named
+// `haus` holding a child repo also called `haus`). That patched the one
+// collision somebody had hit rather than the shape of the problem: two repos
+// that collide with each other and not with the pane you happen to be standing
+// in still shared a bucket, and which of them a later `scruff <repo>/<name>`
+// resolved to depended on discovery order.
 //
-// Buckets are COSMETIC: every command re-derives a worktree's main checkout from
-// the checkout itself, never from the path. SPEC.md §4 makes the slug
-// unconditional; until then this keeps existing checkouts where they are.
-func (e *Env) bucketFor(main string) string {
-	bucket := filepath.Base(main)
-	if cur, err := gitx.MainCheckout(e.Cwd); err == nil && filepath.Base(cur) == bucket && cur != main {
-		if slug, err := gitx.RemoteSlug(main); err == nil && slug != "" {
-			return filepath.Join(sanitizeSlug(slug))
-		}
-	}
-	return bucket
-}
-
-func sanitizeSlug(slug string) string {
-	out := []rune(slug)
-	for i, r := range out {
-		if r == '/' {
-			out[i] = '-'
-		}
-	}
-	return string(out)
-}
+// Buckets stay COSMETIC. Every command re-derives a lane's main checkout from
+// the checkout itself, never by parsing this path, which is what lets existing
+// rows keep the basename bucket they were created in (§4's Migration).
+func (e *Env) bucketFor(main string) string { return repoKey(main) }
 
 // laneNameBudget is the longest lane NAME this repo can carry, in bytes, or 0
 // for "no cap" — `name_max` unset, which is every install whose lane backend
@@ -716,6 +702,11 @@ func sanitizeSlug(slug string) string {
 // writes and the one a backend joins on) rather than the name, because the repo
 // is half of what has to fit: the same name is comfortable in `nix` and over
 // the line in `homebrew-tap`. The budget is what the repo leaves over.
+//
+// The basename, deliberately, and it is the same `<repo>` laneID spells — the
+// backend's key, not the repo identity repoKey answers. A slug here would spend
+// the owner's bytes out of every lane name on the machine (`hausfold-` is nine
+// of them) to disambiguate a session namespace scruff does not name.
 //
 // A repo whose own name eats the whole cap gets 0. No name can help there, and
 // a lane nobody can name is worse than one that might not open; the backend's
