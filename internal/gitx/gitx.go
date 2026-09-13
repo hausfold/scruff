@@ -212,11 +212,30 @@ func PushedAnywhere(dir, rev string) bool {
 	return err == nil && out != ""
 }
 
+// Remotes lists the repo's remotes in git's own order, which is alphabetical.
+//
+// Identity takes the FIRST one that answers (RemoteSlug); `scruff doctor` wants
+// all of them, because two remotes resolving to different slugs is the fork
+// workflow and the only place it shows is a report (SPEC.md §4).
+func Remotes(dir string) []string {
+	out, err := Run(dir, "remote")
+	if err != nil || out == "" {
+		return nil
+	}
+	return Lines(out)
+}
+
 // RemoteSlug is owner/name parsed from a remote URL, for the forge adapter.
 //
 // This — not the directory basename — is a repo's identity (SPEC.md §4). Two
 // checkouts named `api` under different orgs is the common case, not the
 // exotic one.
+//
+// `origin` wins outright, and the rungs below it are a fallback for a repo that
+// has no `origin` at all — NOT a vote between remotes. In a fork workflow the
+// slug is therefore the fork, which is the deliberate answer and also the one
+// that makes every PR query miss; `scruff doctor` names that (`fork-remotes`),
+// and §4 says why the landing check does not go looking for a better remote.
 func RemoteSlug(dir string) (string, error) {
 	var url string
 	var err error
@@ -227,11 +246,11 @@ func RemoteSlug(dir string) (string, error) {
 	}
 	if url == "" {
 		// Any remote at all, alphabetically, before giving up.
-		names, nerr := Run(dir, "remote")
-		if nerr != nil || names == "" {
+		names := Remotes(dir)
+		if len(names) == 0 {
 			return "", errors.New("no remote to take an identity from")
 		}
-		if url, err = Run(dir, "remote", "get-url", Lines(names)[0]); err != nil {
+		if url, err = Run(dir, "remote", "get-url", names[0]); err != nil {
 			return "", err
 		}
 	}

@@ -500,9 +500,9 @@ real registry. `scruff doctor`'s `resolved from` line is the check that catches 
 
 - No `origin`? Try `upstream`, then the first remote alphabetically, then fall
   back to `local/<basename>` and record `repo = null` in the registry — degraded,
-  works, and `scruff doctor` tells you to add a remote.
+  works, and `scruff doctor` tells you to add a remote (finding `no-remote`).
 - Multiple remotes disagreeing (fork workflows): `origin` wins; `scruff doctor`
-  reports the ambiguity.
+  reports the ambiguity (finding `fork-remotes`).
 - The bucket directory is **cosmetic**; every command re-derives a lane's main
   checkout from the checkout itself (`git rev-parse --git-common-dir`), exactly as
   `resume_rows` does today. Never parse identity out of a path.
@@ -529,6 +529,55 @@ on top of the key:
   also spend the owner's bytes out of every lane name on the machine: 46 leaves
   27 bytes in `hausfold.co` and 16 under `hausfold-hausfold.co`. Both halves
   move together in one release pair, or neither moves.
+
+**The fork workflow: `origin` wins, and the landing check does not go looking.**
+
+`origin` a personal fork, `upstream` the project, pull requests opened fork →
+upstream. It is the commonest shape a stranger contributes in, and the one where
+identity is exactly half an answer: it resolves — to the fork — and everything
+downstream follows it there. `gh pr list -R <fork>` asks a repo the PRs have
+never lived in, so §3's `pr-head-oid` rung can never fire, and the ladder falls
+back to what git alone can prove: ancestry, once the fork's base branch is
+synced, and patch-equivalence for a cherry-pick. A **squash** merge upstream —
+what most projects do — leaves nothing for either, so the lane reads not-landed
+forever and `scruff reap` walks past it every time.
+
+The outcome is correct and it is invariant 2 working. What was wrong is that it
+happened in silence: doctor's findings said "none — nothing here needs a human"
+in a repo where no lane can ever be swept.
+
+**The landing check does not consult `upstream`.** The tempting fix is to ask the
+second remote, and the forge answer there really is authoritative — `pr-head-oid`
+requires the local tip to equal the merged PR's `headRefOid` exactly, a guard
+strong enough that a false positive needs some other fork to be holding your own
+commit object. The reason not to sits upstream of that: **there is nothing to
+read.** `upstream` is a convention, not a declaration. It is `up` on one machine,
+`canonical` on the next, and on a third it is a vendor mirror nobody has ever
+sent a PR to. Choosing one of N remotes to believe is scruff guessing which is
+the forge of record, in the one code path that DELETES branches — and invariant 2
+does not resolve a guess, it resolves to keep.
+
+So the blindness is named rather than closed:
+
+| | |
+|---|---|
+| `scruff doctor` | finding `fork-remotes` — the identity, the remote that disagrees, and the sweep that will therefore never fire |
+| `scruff reap` | keeps the lane, exactly as it already did |
+| `scruff drop <name>` | a human naming one lane, which may take anything (§6.4b's asymmetry) |
+| `[hooks] landed` | §6.5's seam — the declaration that does not otherwise exist, written by the one party who knows |
+
+The `landed` hook is the sanctioned close, and this is a case it was specified
+for: "a monorepo where the PR is in a different repo than the code" is this same
+shape wearing a different hat. Two lines of shell nominating the remote beat
+scruff inferring it, because the person writing them knows the answer and scruff
+does not.
+
+A first-class nomination — a `forge_remote` key feeding `gh -R` while identity
+stays `origin` — is the obvious 0.2 shape and is deliberately **not** here. It
+wants the per-repo config layer §6.4's `--write` is already waiting on, and it is
+a new frozen key; until that exists the hook covers the case without one.
+
+---
 
 **Migration:** existing rows keep their existing `path`. scruff reads them, resolves
 them, and never rewrites a path under a live row — new lanes get slug buckets,
@@ -905,11 +954,16 @@ scruff doctor --write    # ⏳ 0.2 — write a proposed .scruff.toml
 CLI *and whether it is authenticated*, occupancy (`lsof` / heartbeat leases),
 whether the filesystem the checkouts land on supports reflink, and the machine
 config with its hooks; then, for the repo it was run in, submodules / LFS /
-sparse-checkout (§8) and **which rung answered the default-branch question** —
-`origin-head` | `conventional` | `head`, weakest last, because the weakest rung
-moves when somebody checks out a side branch in the main checkout and that is
-the branch every landed verdict is measured against. Then the findings: stale
-registry rows, stray checkouts, orphan branches, and disk used per repo
+sparse-checkout (§8), **every remote and the identity it would give** (slug
+only, never the URL — the report is written to be pasted into a public issue and
+an https remote routinely carries a token), and **which rung answered the
+default-branch question** — `origin-head` | `conventional` | `head`, weakest
+last, because the weakest rung moves when somebody checks out a side branch in
+the main checkout and that is the branch every landed verdict is measured
+against. Then the findings: remotes that disagree about who the repo is and a
+repo with no remote at all (§4, `fork-remotes` and `no-remote` — the two
+situations in which nothing can ever be reaped on PR evidence), stale registry
+rows, stray checkouts, orphan branches, and disk used per repo
 (`du`-equivalent, walked in Go, counting allocated blocks so a reflinked tree
 reads as the near-nothing it costs).
 

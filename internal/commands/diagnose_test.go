@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -100,5 +101,76 @@ func TestPlural(t *testing.T) {
 		if got := plural(c.n, "lane"); got != c.want {
 			t.Errorf("plural(%d) = %q, want %q", c.n, got, c.want)
 		}
+	}
+}
+
+// SPEC.md §4's two remote situations. Both are silent everywhere else in scruff
+// — identity resolves, every command runs, nothing errors — so a doctor that
+// says "none — nothing here needs a human" in either is the whole bug.
+func TestRepoFindingsNamesBothRemoteSituations(t *testing.T) {
+	fork := &diagRepo{
+		Slug: "julienmartel/kilo",
+		Main: "/checkouts/kilo",
+		Remotes: []diagRemote{
+			{Name: "origin", Slug: "julienmartel/kilo"},
+			{Name: "upstream", Slug: "antirez/kilo"},
+		},
+	}
+	got := repoFindings(fork, false)
+	if len(got) != 1 || got[0].Kind != "fork-remotes" {
+		t.Fatalf("a fork's disagreeing remotes went unreported: %+v", got)
+	}
+	// The finding has to name the remote scruff is NOT asking; "there is an
+	// ambiguity" without the other slug leaves the reader with no next move.
+	if !strings.Contains(got[0].Detail, "antirez/kilo") {
+		t.Errorf("the finding never named the other remote: %q", got[0].Detail)
+	}
+
+	// Same slug through a different protocol is a mirror, not a disagreement —
+	// ParseSlug normalises scp-style and https to one identity, and a finding
+	// here would fire on half the repos in the world.
+	mirror := &diagRepo{
+		Slug: "acme/alpha",
+		Main: "/checkouts/alpha",
+		Remotes: []diagRemote{
+			{Name: "origin", Slug: "acme/alpha"},
+			{Name: "gh", Slug: "acme/alpha"},
+		},
+	}
+	if got := repoFindings(mirror, false); len(got) != 0 {
+		t.Errorf("two spellings of one remote read as a fork: %+v", got)
+	}
+
+	bare := &diagRepo{Slug: "local/alpha", Main: "/checkouts/alpha", Remotes: []diagRemote{}}
+	got = repoFindings(bare, true)
+	if len(got) != 1 || got[0].Kind != "no-remote" {
+		t.Fatalf("a remote-less repo went unreported: %+v", got)
+	}
+
+	// No remedy anywhere may send a reader to `git worktree remove` — invariant
+	// 2 defeated from the outside, by a report that was meant to help.
+	for _, f := range append(repoFindings(fork, false), repoFindings(bare, true)...) {
+		if strings.Contains(f.Remedy, "git worktree") {
+			t.Errorf("a remedy pointed at raw git worktree surgery: %q", f.Remedy)
+		}
+	}
+}
+
+// The remotes line is the one place a URL could reach a report that exists to
+// be pasted into a public issue, so it carries slugs and never URLs.
+func TestRemotesLineIsTheDisagreementAndNeverAURL(t *testing.T) {
+	fork := &diagRepo{
+		Slug: "julienmartel/kilo",
+		Remotes: []diagRemote{
+			{Name: "origin", Slug: "julienmartel/kilo"},
+			{Name: "upstream", Slug: "antirez/kilo"},
+		},
+	}
+	if got, want := remotesLine(fork), "origin julienmartel/kilo · upstream antirez/kilo"; got != want {
+		t.Errorf("remotesLine = %q, want %q", got, want)
+	}
+	bare := &diagRepo{Slug: "local/alpha", Remotes: []diagRemote{}}
+	if got := remotesLine(bare); !strings.Contains(got, "local/alpha") {
+		t.Errorf("a remote-less repo's line didn't name the fallback identity: %q", got)
 	}
 }
