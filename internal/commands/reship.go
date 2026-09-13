@@ -39,6 +39,27 @@ func (e *Env) Reship(want string) error {
 		return exitcode.Refusedf("'%s' has nothing the %s branch doesn't already have.", branch, base)
 	}
 
+	// reship's whole contract is "push the commits that outran a MERGED PR", and
+	// a lane that never had a PR of any kind has outrun nothing. Without this the
+	// verb went straight to the push and let the REMOTE be the one to say no —
+	// which it does in raw git, with no guidance ("Permission to antirez/kilo.git
+	// denied", "could not read Username for 'https://gitlab.com'"), and only
+	// because those two remotes happened to refuse. On a repo the user can write
+	// to, the push succeeds and origin grows a branch on a precondition that was
+	// never true. An OPEN PR is the one other thing worth pushing to, so it
+	// counts here too: that is the in-flight lane below, whose push IS the job.
+	// Asked with the others, BEFORE the push, so a refusal can never leave a
+	// pushed branch behind it.
+	openURL := e.openPRFor(slug, branch)
+	if merged, _ := e.mergedMapLookup(main, branch); merged == "" && openURL == "" {
+		return exitcode.Refusedf(
+			"'%s' has no merged PR to ship past — reship pushes the commits a lane made "+
+				"after its PR merged, and this branch has no PR at all. "+
+				"If it simply needs to go up, that is `git push -u origin %s` then `gh pr create`.",
+			branch, branch,
+		)
+	}
+
 	// A branch whose tip does not build on its own merged PR is not "ahead" of
 	// it, it is STALE or SIDEWAYS: a second checkout of the same branch name
 	// that never pulled, a rebase, an amend. Pushing it would recreate a
@@ -61,8 +82,10 @@ func (e *Env) Reship(want string) error {
 	}
 
 	// An OPEN PR already covers these commits; the push above was the whole job.
-	if url := e.openPRFor(slug, branch); url != "" {
-		ui.Say("an open PR already covers this branch — pushed to it: %s", url)
+	// Answered from the lookup made before the push: a PR cannot open on a branch
+	// between those two moments, and the question costs ~0.5 s of forge round-trip.
+	if openURL != "" {
+		ui.Say("an open PR already covers this branch — pushed to it: %s", openURL)
 		return nil
 	}
 

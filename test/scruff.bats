@@ -1896,6 +1896,27 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
   no_pr_created || fail "a PR was opened for content the merge already superseded"
 }
 
+# The verb's contract is "push the commits that outran a MERGED PR". Proved on
+# two foreign repos: in lanes that never had a PR of any kind, reship went
+# straight to `git push` and let the remote answer — raw 403 from GitHub, "could
+# not read Username" from GitLab. Nothing was lost only because both remotes
+# refused; on a repo the user can write to, origin grows a branch on a
+# precondition that was never true.
+@test "reship: refuses a branch that never had a PR instead of pushing to origin" {
+  local main dir bare; main="$(mkrepo alpha)"; dir="$(mkwt "$main" nopr)"
+  bare="$(mkremote "$main")"
+  commit_in "$dir" work.txt "real work, but nothing has ever been opened for it"
+  cd "$TMP"; wt_run reship nopr
+  [ "$status" -eq 2 ] || fail "refusing for safety is exit 2, not $status: $output"
+  [[ "$output" == *"no merged PR to ship past"* ]] \
+    || fail "reship refused for the wrong reason, or didn't refuse: $output"
+  git -C "$bare" show-ref -q --verify refs/heads/worktree-nopr \
+    && fail "reship pushed a branch that has never had a PR"
+  no_pr_created || fail "a PR was opened for a branch reship should have refused"
+}
+
+# …but an OPEN PR is a thing worth pushing to, merged PR or not: the push IS the
+# whole job here, so the refusal above must not swallow the in-flight lane.
 @test "reship: an already-open PR takes the push and no second PR" {
   local main dir bare; main="$(mkrepo alpha)"; dir="$(mkwt "$main" inflight)"
   bare="$(mkremote "$main")"

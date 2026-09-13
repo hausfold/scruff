@@ -278,6 +278,18 @@ Contract points that matter:
   #60 the map behind this listed MERGED PRs only, so the follow-up PR `scruff
   reship` had just opened was invisible and the lane went on being told to
   reship, forever.
+- **`scruff reship` asks for a PR before it pushes, not after.** The verb's
+  contract is "push the commits that outran a **merged** PR", so a lane with
+  neither a merged PR nor an open one has outrun nothing and is refused (exit 2)
+  — it does not push and let the REMOTE be the first to say no. Proved on two
+  foreign repos whose lanes had never had a PR of any kind: a raw `403` from
+  GitHub, `could not read Username` from GitLab, no guidance in either, and
+  nothing lost only because both remotes happened to refuse. On a repo with
+  write access the push succeeds and origin grows a branch on a precondition
+  that was never true. An **open** PR counts here too — the push lands on it,
+  which is the whole job for an in-flight lane. This joins reship's two existing
+  refusals (nothing past the base, a diverged tip) ahead of the push, so no
+  refusal can ever leave a pushed branch behind it.
 - **A branch name is not a lane, and the forge only knows the name.** scruff
   coins lane names from a small word list and a task name gets reused outright —
   one repo's `worktree-continue-factory-docs` has carried seven PRs — so the
