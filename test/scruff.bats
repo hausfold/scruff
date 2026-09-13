@@ -3558,6 +3558,76 @@ teardown() {
   [[ "$output" == *'"available": false'* ]] || fail "$output"
 }
 
+@test "doctor: names a fork's disagreeing remotes — the reason its lanes never sweep" {
+  # The commonest shape a stranger contributes in: `origin` is their fork,
+  # `upstream` is the project. Identity resolves to the fork (SPEC.md §4), so
+  # every `gh pr` query goes where their PRs have never lived, and a lane whose
+  # PR merged upstream is kept forever with nothing said about why.
+  local main; main="$(mkrepo alpha)"
+  git -C "$main" remote set-url origin "https://github.com/stranger/alpha.git"
+  git -C "$main" remote add upstream "git@github.com:acme/alpha.git"
+
+  cd "$main"; wt_run doctor
+  [ "$status" -eq 0 ] || fail "a finding is not a failure: $status / $output"
+  [[ "$output" == *"fork remotes"* ]] || fail "the ambiguity went unreported: $output"
+  [[ "$output" == *"stranger/alpha"* ]] || fail "the finding didn't name the identity: $output"
+  # Naming the remote scruff is NOT asking is the half that gives a next move.
+  [[ "$output" == *"acme/alpha"* ]] || fail "the finding didn't name the other remote: $output"
+  # And the repo section shows the disagreement without being asked for it.
+  [[ "$output" == *"origin stranger/alpha · upstream acme/alpha"* ]] || fail "no remotes line: $output"
+}
+
+@test "doctor: a credential in a remote URL never reaches the report" {
+  # The report exists to be pasted into a public issue. `remote get-url` hands
+  # back whatever is in the config, tokens included, so the remotes line carries
+  # the PARSED slug and never the URL it came from.
+  local main; main="$(mkrepo alpha)"
+  git -C "$main" remote set-url origin "https://x-access-token:ghp_notarealtoken@github.com/acme/alpha.git"
+  cd "$main"; wt_run doctor
+  [ "$status" -eq 0 ] || fail "$status / $output"
+  [[ "$output" != *"ghp_notarealtoken"* ]] || fail "doctor printed a credential: $output"
+  [[ "$output" == *"origin acme/alpha"* ]] || fail "the slug didn't survive the strip: $output"
+}
+
+@test "doctor: a repo with no remote is told to add one, and keys on its basename" {
+  # SPEC.md §4's degraded identity: it works, and the collision it sets up (two
+  # `api` checkouts under different orgs, one bucket) is invisible until a
+  # second one shows up. This is the only warning anyone gets.
+  local main="$TMP/repos/orphanrepo"
+  mkdir -p "$main"
+  git -C "$main" init -q -b main
+  git -C "$main" config commit.gpgsign false
+  echo hello >"$main/README.md"
+  git -C "$main" add -A
+  git -C "$main" -c commit.gpgsign=false commit -qm init
+
+  cd "$main"; wt_run doctor
+  [ "$status" -eq 0 ] || fail "a finding is not a failure: $status / $output"
+  [[ "$output" == *"no remote"* ]] || fail "the remote-less repo went unreported: $output"
+  [[ "$output" == *"local/orphanrepo"* ]] || fail "the fallback identity isn't named: $output"
+  [[ "$output" == *"git remote add origin"* ]] || fail "§4 says doctor tells you to add a remote: $output"
+  # The one remedy in the set that is not a scruff verb is still not worktree
+  # surgery — `git remote add` cannot lose a lane.
+  run bash -c "printf '%s\n' \"\$0\" | grep '→' | grep -c 'git worktree' || true" "$output"
+  [ "$output" = 0 ] || fail "a remedy line pointed at worktree surgery"
+}
+
+@test "doctor --json: the remote situations are data, and a healthy repo has neither" {
+  local main; main="$(mkrepo alpha)"
+  cd "$main"; wt_run doctor --json
+  [ "$status" -eq 0 ] || fail "$status / $output"
+  [[ "$output" == *'"remotes":'* ]] || fail "no remotes key: $output"
+  [[ "$output" == *'"slug": "acme/alpha"'* ]] || fail "$output"
+  # One remote agreeing with itself is not an ambiguity. A finding here would
+  # fire on nearly every repo scruff is ever run in.
+  [[ "$output" != *'"fork-remotes"'* ]] || fail "a plain repo read as a fork: $output"
+  [[ "$output" != *'"no-remote"'* ]] || fail "a repo with an origin read as remote-less: $output"
+
+  git -C "$main" remote add upstream "git@github.com:other/alpha.git"
+  wt_run doctor --json
+  [[ "$output" == *'"kind": "fork-remotes"'* ]] || fail "the finding isn't in --json: $output"
+}
+
 @test "doctor --write: refuses, and names the layer it is waiting on" {
   cd "$TMP"; wt_run doctor --write
   [ "$status" -eq 1 ] || fail "want exit 1 (usage), got $status: $output"

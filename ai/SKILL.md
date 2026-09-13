@@ -42,7 +42,7 @@ system, the package manager or which agent is running.
 | push commits that outran a merged PR | `scruff reship [name]` |
 | stand up/enter/tear down a lane's VM or container | `scruff runtime up\|enter\|down <name> --backend <id>` |
 | **see a desktop change work without touching the user's screen** | `scruff runtime up <name> --backend tart` — built in, needs `tart` + `SCRUFF_TART_BASE`. Boots a headless macOS with the lane shared in and returns once a shell answers; then drive it over `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@$(tart ip scruff-<name>)` (both options, always — vmnet gives the next clone the same address): `screencapture -x` there returns real pixels, `osascript` sends the keystrokes. Prefer this over asking to drive the machine you are on |
-| what state is this machine in (a bug report, "why is nothing being reaped") | `scruff doctor`, or `--json` — forge auth, occupancy, reflink, stray checkouts, orphan branches, disk per repo. It changes nothing and exits 0 even with findings |
+| what state is this machine in (a bug report, "why is nothing being reaped") | `scruff doctor`, or `--json` — forge auth, occupancy, reflink, stray checkouts, orphan branches, fork/missing remotes, disk per repo. It changes nothing and exits 0 even with findings |
 | watch lifecycle events | `scruff watch --json` (NDJSON, one object per line) |
 | put this skill into another agent client | `scruff skill install [--client codex]` — writes what the installed binary ships; exit 2 means it refused to overwrite, never that it broke |
 | everything, exhaustively | `scruff --help` (prints to **stderr**); `scruff <verb> --help` is just that verb's lines, and no verb does its work on a help flag |

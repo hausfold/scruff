@@ -143,16 +143,30 @@ type diagConfig struct {
 // LFS filter, a sparse cone — and answering them for eight repos at once would
 // bury the one the user is standing in.
 type diagRepo struct {
-	Slug             string `json:"slug"`
-	Main             string `json:"main"`
-	Checkout         string `json:"checkout"`
-	Lane             string `json:"lane,omitempty"` // set when this checkout IS a scruff lane
-	DefaultBranch    string `json:"default_branch"`
-	DefaultBranchVia string `json:"default_branch_via"` // origin-head | conventional | head | none
-	Submodules       int    `json:"submodules"`
-	LFS              bool   `json:"lfs"`
-	LFSCLI           bool   `json:"lfs_cli"`
-	SparseCheckout   bool   `json:"sparse_checkout"`
+	Slug             string       `json:"slug"`
+	Main             string       `json:"main"`
+	Checkout         string       `json:"checkout"`
+	Lane             string       `json:"lane,omitempty"` // set when this checkout IS a scruff lane
+	Remotes          []diagRemote `json:"remotes"`        // [] when there are none, which is a fact, not an unknown
+	DefaultBranch    string       `json:"default_branch"`
+	DefaultBranchVia string       `json:"default_branch_via"` // origin-head | conventional | head | none
+	Submodules       int          `json:"submodules"`
+	LFS              bool         `json:"lfs"`
+	LFSCLI           bool         `json:"lfs_cli"`
+	SparseCheckout   bool         `json:"sparse_checkout"`
+}
+
+// diagRemote is one remote and the identity it would give this repo.
+//
+// The URL itself is deliberately NOT carried. Doctor's output exists to be
+// pasted into a bug report, and an https remote routinely holds a credential
+// (`https://x-access-token:ghp_…@github.com/o/r`). ParseSlug drops the userinfo
+// on its way to owner/name, so the slug is the whole diagnostic fact with none
+// of the secret — the same reason `Slug` and not `URL` is what the registry
+// keys on.
+type diagRemote struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"` // "" when the URL parsed to nothing usable
 }
 
 type diagSummary struct {
@@ -164,12 +178,17 @@ type diagSummary struct {
 }
 
 // diagFinding is one thing worth doing something about. Kind is a closed set,
-// and it is what a script matches on; Detail and Remedy are for the human, and
-// Remedy is always a scruff verb — nothing here ever tells anyone to reach for
-// `git worktree remove`, which is the exact move that defeats invariant 2 from
-// the outside.
+// and it is what a script matches on; Detail and Remedy are for the human.
+//
+// A Remedy is a scruff verb wherever scruff owns the fix, and it NEVER names
+// `git worktree remove` — that is the exact move that defeats invariant 2 from
+// the outside, and a report that suggests it does the damage at one remove. The
+// one shape that escapes the verb is a fix that is genuinely not scruff's to
+// make: a repo with no remote needs `git remote add`, which SPEC.md §4 says in
+// as many words, and inventing a `scruff remote` wrapper for it would be scruff
+// growing a git porcelain it has no reason to own.
 type diagFinding struct {
-	Kind   string `json:"kind"` // legacy-base | stale-row | stray-checkout | orphan-branch
+	Kind   string `json:"kind"` // legacy-base | stale-row | stray-checkout | orphan-branch | fork-remotes | no-remote
 	Repo   string `json:"repo,omitempty"`
 	Name   string `json:"name,omitempty"`
 	Branch string `json:"branch,omitempty"`
@@ -216,7 +235,9 @@ func (e *Env) gather() diagnosis {
 	d.Base = base
 	d.Findings = append(d.Findings, baseFindings...)
 	d.Environment = e.diagEnvironment()
-	d.Repo = e.diagRepo()
+	repo, repoFinds := e.diagRepo()
+	d.Repo = repo
+	d.Findings = append(d.Findings, repoFinds...)
 
 	// discover() returns everything it can reach, INCLUDING entries a dead
 	// registry row points at. The findings pass wants all of that; the counts
@@ -484,24 +505,40 @@ func runBounded(name string, args ...string) (stdout, stderr string, ok bool) {
 
 // ── the repo you are standing in ─────────────────────────────────────────────
 
-func (e *Env) diagRepo() *diagRepo {
+func (e *Env) diagRepo() (*diagRepo, []diagFinding) {
 	main, err := gitx.MainCheckout(e.Cwd)
 	if err != nil || main == "" {
-		return nil
+		return nil, nil
 	}
 	top, err := gitx.Toplevel(e.Cwd)
 	if err != nil {
 		top = e.Cwd
 	}
-	slug, err := gitx.RemoteSlug(main)
-	if err != nil {
-		slug = "local/" + filepath.Base(main)
+	// repoSlug, not a second derivation of it: repo.go exists because scruff had
+	// two spellings of "which repo is this?" and they disagreed, and a doctor
+	// that reports an identity no other command uses is that bug with a report
+	// attached.
+	//
+	// `degraded` is SPEC.md §4's remote-less repo, where that slug is
+	// `local/<basename>` and the registry records no repo. It is read off the
+	// remotes rather than off the slug's shape — `local/foo` is a legal owner
+	// and name on a forge, and sniffing the prefix would call a real repo
+	// degraded. Nothing here is an error: everything still works, which is
+	// exactly why it needs saying out loud.
+	remotes := remoteIdentities(main)
+	degraded := true
+	for _, rem := range remotes {
+		if rem.Slug != "" {
+			degraded = false
+			break
+		}
 	}
 	branch, via := gitx.DefaultBranchDetail(main)
 	r := &diagRepo{
-		Slug:             slug,
+		Slug:             repoSlug(main),
 		Main:             main,
 		Checkout:         top,
+		Remotes:          remotes,
 		DefaultBranch:    branch,
 		DefaultBranchVia: via,
 		Submodules:       countSubmodules(top),
@@ -516,7 +553,58 @@ func (e *Env) diagRepo() *diagRepo {
 	if row, ok := e.Reg.Find(top); ok {
 		r.Lane = row.Name
 	}
-	return r
+	return r, repoFindings(r, degraded)
+}
+
+// remoteIdentities resolves every remote to the slug it would give this repo.
+//
+// Read off `main` rather than the checkout: a worktree shares its remote config
+// through the common dir, so the two agree, and `main` is what RemoteSlug was
+// asked — a second source here could disagree with the identity beside it.
+func remoteIdentities(main string) []diagRemote {
+	out := []diagRemote{}
+	for _, name := range gitx.Remotes(main) {
+		url, err := gitx.Run(main, "remote", "get-url", name)
+		if err != nil || url == "" {
+			continue
+		}
+		out = append(out, diagRemote{Name: name, Slug: gitx.ParseSlug(url)})
+	}
+	return out
+}
+
+// repoFindings is SPEC.md §4's two remote situations, and doctor is the command
+// that names them. Both are otherwise silent: identity resolves, every command
+// runs, nothing errors, and the only symptom is lanes that are never swept.
+//
+// Neither finding proposes that scruff go looking for a better remote. `origin`
+// winning is §4's decision and the landing check follows identity on purpose —
+// picking a different remote to believe would be scruff GUESSING which of N
+// remotes is the forge of record, in the one code path that deletes branches,
+// and invariant 2 does not guess. So the blindness gets a name and a human gets
+// the choice.
+func repoFindings(r *diagRepo, degraded bool) []diagFinding {
+	if degraded {
+		return []diagFinding{{
+			Kind: "no-remote", Repo: r.Slug, Path: r.Main,
+			Detail: "this repo has no remote to take an identity from, so scruff keys it on the directory name and records no repo for its lanes — another checkout called " + filepath.Base(r.Main) + " under a different org shares the same bucket, and no PR can ever be found for a branch here, so nothing is reaped on PR evidence",
+			Remedy: "git remote add origin <url> — new lanes key on the slug from then on, and the rows you already have keep the paths they have",
+		}}
+	}
+	var others []string
+	for _, rem := range r.Remotes {
+		if rem.Slug != "" && rem.Slug != r.Slug {
+			others = append(others, rem.Name+" is "+rem.Slug)
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	return []diagFinding{{
+		Kind: "fork-remotes", Repo: r.Slug, Path: r.Main,
+		Detail: "this repo's remotes disagree about who it is: identity is " + r.Slug + ", and " + strings.Join(others, ", ") + ". scruff keys on origin (SPEC.md §4), so every PR query asks " + r.Slug + " — if your pull requests land somewhere else, scruff never sees one merge and a squash-merged lane stays kept rather than swept",
+		Remedy: "nothing, if your PRs land in " + r.Slug + ". Otherwise scruff drop <name> takes a lane by hand, and a [hooks] landed entry (SPEC.md §6.5) teaches the sweep where they really land",
+	}}
 }
 
 // countSubmodules reads `.gitmodules` through git rather than by hand, so an
@@ -763,6 +851,7 @@ func (e *Env) renderDiagnosis(d diagnosis) {
 		out("repo   %s", r.Slug)
 		field("checkout", "%s%s", r.Checkout, laneNote(r))
 		field("main", "%s", r.Main)
+		field("remotes", "%s", remotesLine(r))
 		field("default branch", "%s — %s", r.DefaultBranch, branchViaNote(r.DefaultBranchVia))
 		field("submodules", "%s", submoduleNote(r.Submodules))
 		field("LFS", "%s", lfsNote(r))
@@ -780,9 +869,15 @@ func (e *Env) renderDiagnosis(d diagnosis) {
 		note("%s", "none — nothing here needs a human")
 	}
 	for _, f := range d.Findings {
+		// A lane finding is headed by its name with the repo in parentheses; a
+		// finding ABOUT the repo has no lane, so the repo stands alone rather
+		// than degrading to a bare path nobody can read at a glance.
 		head := f.Name
-		if f.Repo != "" && head != "" {
+		switch {
+		case head != "" && f.Repo != "":
 			head += " (" + f.Repo + ")"
+		case head == "":
+			head = f.Repo
 		}
 		if head == "" {
 			head = f.Path
@@ -901,6 +996,26 @@ func laneNote(r *diagRepo) string {
 	return " (the `" + r.Lane + "` lane)"
 }
 
+// remotesLine names every remote and the identity it would give, origin first
+// because origin is the one that wins. The point of the line is the DISAGREEMENT
+// — a fork's `origin julienmartel/kilo · upstream antirez/kilo` is the whole
+// explanation for a repo whose lanes never sweep — so it prints even when there
+// is only one, which is the reading that makes "only one" informative.
+func remotesLine(r *diagRepo) string {
+	if len(r.Remotes) == 0 {
+		return "none — identity falls back to " + r.Slug + ", and no PR can be found for any branch here"
+	}
+	parts := make([]string, 0, len(r.Remotes))
+	for _, rem := range r.Remotes {
+		slug := rem.Slug
+		if slug == "" {
+			slug = "?"
+		}
+		parts = append(parts, rem.Name+" "+slug)
+	}
+	return strings.Join(parts, " · ")
+}
+
 func branchViaNote(via string) string {
 	switch via {
 	case "origin-head":
@@ -954,6 +1069,10 @@ func findingLabel(kind string) string {
 		return "stray checkout"
 	case "orphan-branch":
 		return "orphan branch"
+	case "fork-remotes":
+		return "fork remotes"
+	case "no-remote":
+		return "no remote"
 	}
 	return kind
 }
