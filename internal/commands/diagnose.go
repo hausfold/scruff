@@ -572,7 +572,7 @@ func (e *Env) laneFindings(entries []Entry) []diagFinding {
 		if !e.branchAlive(entry) {
 			continue // a dead row's entry: the stale-row pass below owns it, once
 		}
-		repo := filepath.Base(entry.Main)
+		repo := repoKey(entry.Main)
 		if entry.State == Stray {
 			out = append(out, diagFinding{
 				Kind: "stray-checkout", Repo: repo, Name: entry.Name(),
@@ -604,7 +604,7 @@ func (e *Env) laneFindings(entries []Entry) []diagFinding {
 			detail = "the main checkout it points at (" + row.Main + ") is not a git repo any more"
 		}
 		out = append(out, diagFinding{
-			Kind: "stale-row", Repo: filepath.Base(row.Main), Name: row.Name,
+			Kind: "stale-row", Repo: repoKey(row.Main), Name: row.Name,
 			Branch: row.Branch, Path: row.Path,
 			Detail: detail,
 			Remedy: "any `scruff` listing prunes it — nothing to do by hand",

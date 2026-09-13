@@ -474,15 +474,17 @@ machine does.
 
 ## 4. Repo identity: the remote slug, not the directory basename
 
-Today the bucket under `$WT_BASE` is `basename "$main"`, with one special case in
-the bash predecessor's `child` command that falls back to the owner-repo slug **only** when the child's
-basename collides with the spawning pane's. That's a patch on a specific collision
-(a workshop dir vs the repo `hausfold/haus`), and the original "fix" was
-renaming a directory on one machine — which does not survive contact with
-strangers' filesystems, where two `api` checkouts under different orgs are the
-common case, not the exotic one.
+Shipped. The bucket under `$SCRUFF_BASE` used to be `basename "$main"`, with one
+special case in `child` that fell back to the owner-repo slug **only** when the
+child's basename collided with the spawning pane's. That was a patch on a
+specific collision (a workshop dir vs the repo `hausfold/haus`), and the
+original "fix" was renaming a directory on one machine — which does not survive
+contact with strangers' filesystems, where two `api` checkouts under different
+orgs are the common case, not the exotic one. Two of them shared a bucket, a
+repo cell and a selector, so `scruff api/dup` resolved to whichever lane
+`discover` reached first and rebuilt that checkout, in the other org.
 
-**0.1: key every repo on its remote slug, always.**
+**Key every repo on its remote slug, always.**
 
 ```
 identity = owner/name   from `git remote get-url origin`, scheme/user/host stripped
@@ -505,10 +507,35 @@ real registry. `scruff doctor`'s `resolved from` line is the check that catches 
   checkout from the checkout itself (`git rev-parse --git-common-dir`), exactly as
   `resume_rows` does today. Never parse identity out of a path.
 
+One function answers all of it (`internal/commands/repo.go`), and two rules sit
+on top of the key:
+
+- **The listing's repo cell is the name alone — `scruff`, not
+  `hausfold-scruff` — until two repos on screen answer to it, and then both
+  grow.** That cell is presentation, not identity: it is what a user reads to
+  decide what to type, and a column spending nine characters on `hausfold-` on
+  every row cuts to `hausf…` in a narrow pane, which is strictly less than the
+  basename told you. Shortening is safe because §2.0's matcher answers to every
+  spelling a listing ever prints — the key, the name, and the basename that a
+  trill banner's `scruff focus <repo>/<name>` action still carries. Extra
+  spellings can never resolve to the WRONG repo: two repos that answer to the
+  same word both match, and an ambiguous match is refused with every candidate
+  named.
+- **The lane KEY is not this.** `scruff/<repo>/<lane>` — what `askKey` writes,
+  what `name_max` budgets (§5.7), and what haus renders as a zmx session name
+  (§9.1) — stays on the basename. It is a session namespace rather than a repo
+  identity, haus derives it independently in four places of its own, and moving
+  one side alone stops the bar resolving anything, silently. A slug there would
+  also spend the owner's bytes out of every lane name on the machine: 46 leaves
+  27 bytes in `hausfold.co` and 16 under `hausfold-hausfold.co`. Both halves
+  move together in one release pair, or neither moves.
+
 **Migration:** existing rows keep their existing `path`. scruff reads them, resolves
 them, and never rewrites a path under a live row — new lanes get slug buckets,
 old ones stay where they are. One `scruff doctor --relocate` can offer to move them
-later. Cutover day changes nothing on disk.
+later. Cutover day changes nothing on disk. (The test that pins this is the one
+`identity:` case that passes against the binary from before the change too —
+deliberately: it states what must NOT move.)
 
 ---
 

@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -65,7 +64,8 @@ type listRow struct {
 
 func (e *Env) rows() []listRow {
 	var out []listRow
-	for _, entry := range e.discover() {
+	lanes := e.discover()
+	for _, entry := range lanes {
 		if !e.branchAlive(entry) {
 			continue
 		}
@@ -77,7 +77,7 @@ func (e *Env) rows() []listRow {
 		state := string(entry.State)
 		n, pr, diverged := e.postMergeAhead(entry.Main, entry.Branch)
 		row := listRow{
-			Repo:  filepath.Base(entry.Main),
+			Repo:  entry.Main, // → its cell below, once the whole table is known
 			Name:  entry.Name(),
 			State: state,
 			Entry: entry,
@@ -116,6 +116,12 @@ func (e *Env) rows() []listRow {
 			row.Parent = reg.Parent
 		}
 		out = append(out, row)
+	}
+	// The repo cell is decided once the table is: its spelling depends on what
+	// ELSE is on screen (repoCells), so it cannot be filled in row by row.
+	cells := repoCells(lanes)
+	for i := range out {
+		out[i].Repo = cells[out[i].Repo]
 	}
 	return nest(out)
 }

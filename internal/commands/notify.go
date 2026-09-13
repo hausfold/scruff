@@ -186,6 +186,23 @@ func (e *Env) laneFor(payload map[string]any) (name, lane string) {
 // one lane name in two repos. One function, because the reap path builds it
 // from a registry row and the hook path from a payload's cwd, and the two must
 // agree byte for byte or a fin outlives the lane it named.
+//
+// ⚠️ The basename here is NOT an oversight left behind when SPEC.md §4's slug
+// landed everywhere else (repoKey). This one is the lane KEY, not the repo's
+// identity, and it is half of a join scruff does not own both sides of: haus
+// derives `scruff.<repo>.<lane>` from `basename $SCRUFF_MAIN` in four places of
+// its own (lane-open.sh, lane-seen.sh, lanes.sh) and matches the zmx session
+// against the marker file askKey writes. Moving it alone stops the bar
+// resolving anything, silently — §9.1 says so in as many words — and it would
+// also halve `name_max`'s budget on every lane (§5.7's worked numbers are
+// basename numbers: 46 leaves 27 bytes in `hausfold.co`, and 16 under a slug).
+// Both halves move together in one release pair, or neither moves.
+//
+// It costs nothing the slug fixes: two repos that share a basename share a
+// marker filename, and a marker is a CACHE that anything may clear. The lane
+// the banner offers to focus is unambiguous either way — `repoMatches` still
+// answers to the basename, and a genuine ambiguity is refused rather than
+// guessed at.
 func laneID(main, name string) string {
 	if main == "" || name == "" {
 		return ""

@@ -78,7 +78,10 @@ func (e *Env) HookCreate(stdin io.Reader) error {
 			name, len(name), filepath.Base(main), budget, name))
 	}
 
-	dir := filepath.Join(e.Base, filepath.Base(base), name)
+	// Keyed on `main`, not on the payload's cwd — those agree for a pane in the
+	// main checkout and diverge for one standing in a subdirectory of it, where
+	// the old basename bucket was whatever source folder the hook fired from.
+	dir := filepath.Join(e.Base, repoKey(main), name)
 	if err := e.addWorktree(main, name, dir); err != nil {
 		return err
 	}
@@ -148,7 +151,7 @@ func (e *Env) addWorktree(repo, name, dir string) error {
 // §2.3): stdout carries the path alone, because the documented use is
 // `cd "$(scruff new)"`.
 func sayCreated(main, name, dir string) {
-	ui.Say("created %s lane '%s' → %s", filepath.Base(main), name, dir)
+	ui.Say("created %s lane '%s' → %s", repoKey(main), name, dir)
 	if n := countSubmodules(main); n > 0 {
 		ui.Warn("submodules %s: run `git submodule update --init --recursive` in the lane", submoduleNote(n))
 	}
