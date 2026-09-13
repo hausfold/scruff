@@ -133,3 +133,23 @@ func (e *Env) addWorktree(repo, name, dir string) error {
 	}
 	return nil
 }
+
+// sayCreated announces a fresh lane — and, in a repo with submodules, the one
+// thing about that lane which is not yet true.
+//
+// `git worktree add` does not recurse, so the lane's vendored directories are
+// there and EMPTY. A build that dies on a missing directory says nothing about
+// why, and the explanation otherwise lives one verb away in `scruff doctor` —
+// which is no help at all to somebody who has no reason to suspect submodules
+// and so never runs it. Same sentence as doctor's (submoduleWhy), plus the
+// command the reader now has to run.
+//
+// Both lines are stderr, and that is a contract, not a preference (SPEC.md
+// §2.3): stdout carries the path alone, because the documented use is
+// `cd "$(scruff new)"`.
+func sayCreated(main, name, dir string) {
+	ui.Say("created %s lane '%s' → %s", filepath.Base(main), name, dir)
+	if n := countSubmodules(main); n > 0 {
+		ui.Warn("submodules %s: run `git submodule update --init --recursive` in the lane", submoduleNote(n))
+	}
+}
