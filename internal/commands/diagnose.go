@@ -913,11 +913,18 @@ func branchViaNote(via string) string {
 	return "unresolved"
 }
 
+// submoduleWhy is the whole explanation for an empty vendored directory in a
+// fresh lane, and it is a const so that it is said with the SAME words wherever
+// it is said: doctor predicts it for a repo, `new`/`child`/`spawn` report it for
+// the lane they just made (sayCreated). Two phrasings of one cause is how a
+// reader ends up believing they are two causes.
+const submoduleWhy = "`git worktree add` does not recurse, so a new lane's submodule dirs are empty until you init them"
+
 func submoduleNote(n int) string {
 	if n == 0 {
 		return "none"
 	}
-	return fmt.Sprintf("%d — `git worktree add` does not recurse, so a new lane's submodule dirs are empty until you init them", n)
+	return fmt.Sprintf("%d — %s", n, submoduleWhy)
 }
 
 func lfsNote(r *diagRepo) string {

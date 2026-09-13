@@ -2180,6 +2180,46 @@ EOF
   [[ "$output" != *"ran claude"* ]]
 }
 
+@test "new/child/spawn: a submodule repo is told why the lane's vendor dirs are empty" {
+  local g q dir; g="$(mkrepo gamma)"; q="$(mkrepo quiet)"
+  # countSubmodules asks git to read `.gitmodules`, so the DECLARATION is the
+  # whole fixture — no network, no second repo to clone, and the count is the
+  # one git itself would report.
+  printf '[submodule "vendor/kilo"]\n\tpath = vendor/kilo\n\turl = https://github.com/acme/kilo.git\n' >"$g/.gitmodules"
+  git -C "$g" add -A
+  git -C "$g" -c commit.gpgsign=false commit -qm "vendor kilo"
+
+  cd "$g"
+  run --separate-stderr "$WT" new subs
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"submodules 1"* ]] || fail "no submodule note: $stderr"
+  [[ "$stderr" == *"does not recurse"* ]] || fail "not doctor's sentence: $stderr"
+  [[ "$stderr" == *"git submodule update --init --recursive"* ]] || fail "no fix named: $stderr"
+  # The note is stderr and ONLY stderr (SPEC 2.3): a word of it on stdout and
+  # `cd "$(scruff new)"` — the documented use — cds into the warning.
+  [ "$output" = "$CLAUDE_WT_BASE/gamma/subs" ] || fail "stdout is not the path alone: $output"
+  dir="$output"
+  [ -e "$dir/.gitmodules" ]
+
+  # child and spawn share the create path, so they share the silence unless
+  # they share the note. Cross-repo, from a pane in a repo that has none.
+  cd "$q"
+  run --separate-stderr "$WT" child "$g" kid
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"git submodule update --init --recursive"* ]] || fail "child stayed quiet: $stderr"
+  [ "$output" = "$CLAUDE_WT_BASE/gamma/kid" ]
+
+  run --separate-stderr "$WT" spawn "$g" sown
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"git submodule update --init --recursive"* ]] || fail "spawn stayed quiet: $stderr"
+
+  # And a repo with no submodules is not told about submodules.
+  cd "$q"
+  run --separate-stderr "$WT" new nothing-vendored
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *submodule* ]] || fail "warned a repo that has none: $stderr"
+}
+
 @test "new: --open hands the pane to the client, --cmd to anything else" {
   local b; b="$(mkrepo beta)"
   shim_agent codex

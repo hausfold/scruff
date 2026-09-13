@@ -197,7 +197,7 @@ func (e *Env) New(want string, opts NewOpts) error {
 		Path: dir, Parent: e.Cwd, Agent: agentID,
 	})
 	trustWorktree(agentID, main, dir)
-	ui.Say("created %s lane '%s' → %s", filepath.Base(main), name, dir)
+	sayCreated(main, name, dir)
 
 	// The default ending: ONLY the path on stdout, so: cd "$(scruff new)".
 	if !opts.Open && opts.Cmd == "" {
@@ -316,7 +316,7 @@ func (e *Env) Child(target, want string) error {
 		Path: dir, Parent: e.Cwd, Agent: agentID,
 	})
 	trustWorktree(agentID, main, dir)
-	ui.Say("created %s lane '%s' → %s", filepath.Base(main), want, dir)
+	sayCreated(main, want, dir)
 	ui.Out("%s\n", dir) // ONLY the path on stdout, so: cd "$(scruff child …)"
 	return nil
 }
@@ -553,7 +553,7 @@ func (e *Env) Spawn(target, want string, opts SpawnOpts) error {
 		Path: dir, Parent: main, Agent: agentID,
 	})
 	trustWorktree(agentID, main, dir)
-	ui.Say("created %s lane '%s' → %s", filepath.Base(main), name, dir)
+	sayCreated(main, name, dir)
 	// The path goes to stdout BEFORE the seam runs, and unconditionally: a
 	// caller reading `dir="$(scruff spawn …)"` still gets one, and a caller that
 	// asked for a window still needs to be told where the lane landed in order

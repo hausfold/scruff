@@ -1245,7 +1245,7 @@ removed on completion, including on failure (behind `--keep` for debugging).
 |---|---|---|
 | **Occupancy** | ~~one `lsof -d cwd` dump~~ — **done**, see §9.1 | `lsof` is one provider among several; leases cover the rest. Still open: `/proc/*/cwd` as a third provider on Linux. |
 | **Forge** | `gh` hardcoded, GitHub-shaped | §5.4 forge adapters; git-only merge-base fallback when none is present |
-| **Submodules** | not initialised in a new worktree — `git worktree add` doesn't recurse | detect `.gitmodules`; `bootstrap.submodules = "recursive" \| "none"`; default `none` with a `doctor` warning, because recursing can be minutes |
+| **Submodules** | not initialised in a new worktree — `git worktree add` doesn't recurse; `new`/`child`/`spawn` say so on stderr as they hand the lane over, and `doctor` predicts it per repo | detect `.gitmodules`; `bootstrap.submodules = "recursive" \| "none"`; default `none` with the warning that already fires, because recursing can be minutes |
 | **LFS** | pointers, not files, unless a smudge runs | detect `.gitattributes` filter=lfs; offer `git lfs pull` as a bootstrap step; warn loudly rather than silently handing over pointer files |
 | **Sparse-checkout** | not inherited from the main checkout | copy the main checkout's sparse patterns into the new worktree by default (`--no-inherit-sparse` to opt out) — inheriting is nearly always what's meant |
 | **Disk accounting** | ~~none~~ — `scruff doctor` reports per-repo usage in allocated blocks (§6.4) | `scruff list --disk` for the per-lane breakdown; flag when reflink fell back to copy and the tree is >1 GB |
