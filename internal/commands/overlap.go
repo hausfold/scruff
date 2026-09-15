@@ -947,7 +947,7 @@ func (o *overlap) lane(top string, lanes []Entry, only string, brief, asJSON boo
 		if rep.mainRef != "" {
 			against = "every lane and " + rep.mainRef
 		}
-		ui.Report(ui.Muted, "merge-tree: clean against %s", against)
+		ui.Report(ui.Muted, "   merge-tree: clean against %s", against)
 	}
 	return rep.done()
 }
