@@ -91,3 +91,21 @@ const gutter = 3
 func Table(cols []Col, rows [][]string) {
 	printer.PrintData(snug.Table{Cols: cols, Rows: rows, Indent: gutter, Header: true})
 }
+
+// The roles a report paints per CELL rather than per column, and the tag that
+// carries one. `overlap` is the first table whose mark and filename change
+// colour per row — amber where two lanes' edits share a hunk, muted where they
+// only share a file — and a row built with the escapes already in it is what
+// snug's Cell exists to replace: the padding would count them.
+const (
+	Caution = snug.Warn // stale, wants attention — the role a Warn line wears
+	Err     = snug.Err  // failed, refused, conflicting
+	Path    = snug.Path // a filesystem path
+)
+
+// Cell tags one cell with a role of its own, overriding its column's.
+func Cell(r Role, s string) string { return snug.Cell(r, s) }
+
+// Hint prints a next-step line to stderr, muted: what to do about what the
+// report above just said.
+func Hint(format string, a ...any) { printer.Hint(format, a...) }
