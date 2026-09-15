@@ -203,8 +203,7 @@ the implied verb. One envelope, so they can version-check without sniffing:
       "behind": 12,
       "landed": { "verdict": "no", "via": null, "confidence": "certain" },
       "post_merge_ahead": { "commits": 0, "pr": 0, "diverged": false },
-      "pr": { "number": 189, "state": "OPEN", "url": "https://…", "checks": "passing" },
-      "overlap": ["frost"]
+      "pr": { "number": 189, "state": "OPEN", "url": "https://…", "checks": "passing" }
     }
   ],
   "warnings": ["forge unreachable: gh exited 4 — PR state is stale (cached 14m ago)"]
@@ -339,7 +338,7 @@ The bash version has exactly two (0 / 1-via-`die`). Consumers need more:
 | 0 | success — including "nothing to do" |
 | 1 | usage / precondition error (bad args, not a git repo) |
 | 2 | **refused for safety** — occupied, dirty, or not provably landed |
-| 3 | degraded — the operation completed but a signal was unavailable (forge down, no `lsof`); pairs with a `warnings[]` entry |
+| 3 | degraded — the operation completed but a signal was unavailable (forge down, no `lsof`); pairs with a `warnings[]` entry. For `scruff overlap`, the quiet finding: the same file, different regions |
 | 4 | conflict found (`scruff overlap`, `scruff batch`) — a finding, not an error |
 | 5 | lock contention / another scruff holds the registry |
 

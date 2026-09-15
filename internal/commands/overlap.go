@@ -195,7 +195,7 @@ func sideSpans(s side, base string) []span {
 	// but two lanes creating the same new file is a real add/add conflict — and
 	// the one this whole tool would otherwise be blindest to, because a
 	// brand-new file is exactly what an agent writes without checking first.
-	if untracked, err := gitx.Run(s.dir, "ls-files", "--others", "--exclude-standard"); err == nil {
+	if untracked, err := gitx.Run(s.dir, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"); err == nil {
 		for _, f := range gitx.Lines(untracked) {
 			spans = append(spans, span{f, 0, overlapWhole})
 		}
@@ -494,8 +494,12 @@ func (o *overlap) size(base, rev string, s side) int {
 // conflicts is merge-tree's verdict on two committed tips: the paths a real
 // three-way merge would leave conflicted, or none. Exit 1 means conflicts, and
 // the conflicted paths are the lines between the tree OID and the blank line.
-func (o *overlap) conflicts(arev, brev string) []string {
-	out, code := gitx.Exit(o.main, "merge-tree", "--write-tree", "--name-only", arev, brev)
+//
+// only narrows it to one file, the way it narrows the index: `--path` promises
+// silence on a clear file, and a conflict elsewhere in the tree is not this
+// file's news.
+func (o *overlap) conflicts(arev, brev, only string) []string {
+	out, code := gitx.Exit(o.main, "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", arev, brev)
 	if code != 1 {
 		return nil
 	}
@@ -506,6 +510,9 @@ func (o *overlap) conflicts(arev, brev string) []string {
 		}
 		if line == "" {
 			break
+		}
+		if only != "" && line != only {
+			continue
 		}
 		paths = append(paths, line)
 	}
@@ -733,6 +740,9 @@ func (e *Env) overlapLanes(main string) []Entry {
 		}
 		out = append(out, entry)
 	}
+	// Name order, so the table and `lanes[]` read the same on every machine
+	// rather than in whatever order discover reached them.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
 }
 
@@ -745,6 +755,30 @@ func repoRelative(path, top, cwd string) string {
 		return rel
 	}
 	return path
+}
+
+// pairRelative is repoRelative for --pair, which can be run from anywhere: a
+// relative path is anchored on the checkout you are standing in when that
+// checkout belongs to the pair's repo, an absolute one on whichever of the
+// three checkouts in play it lies under, and anything else is taken as already
+// repo-relative. Silence on a clear file is the hook shape's whole answer, so
+// a path anchored on the wrong directory would be a wrong answer, not a
+// missing one.
+func pairRelative(path string, a, b Entry, cwd string) string {
+	if top, err := gitx.Toplevel(cwd); err == nil && top != "" {
+		if main, err := gitx.MainCheckout(top); err == nil && main == a.Main {
+			return repoRelative(path, top, cwd)
+		}
+	}
+	if filepath.IsAbs(path) {
+		for _, root := range []string{a.Path, b.Path, a.Main} {
+			if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+				return rel
+			}
+		}
+		return path
+	}
+	return filepath.Clean(path)
 }
 
 // intent is a lane's last commit subject, or "" when it has no commits of its
@@ -845,7 +879,7 @@ func (o *overlap) lane(top string, lanes []Entry, only string, brief, asJSON boo
 		// stated something false. Two signals disagreeing is the information;
 		// one of them going quiet because the other did is the averaging this
 		// block exists to refuse.
-		if paths := o.conflicts(myHead, entry.Branch); len(paths) > 0 {
+		if paths := o.conflicts(myHead, entry.Branch, only); len(paths) > 0 {
 			rep.Conflicts = append(rep.Conflicts, overlapConflict{A: myLane, B: lane, Paths: paths})
 			verdicts = append(verdicts, []string{ui.Cell(ui.Err, "✗"), lane, strings.Join(paths, " ")})
 		}
@@ -896,7 +930,7 @@ func (o *overlap) lane(top string, lanes []Entry, only string, brief, asJSON boo
 	// commonest way a lane acquires a conflict it did nothing to earn. Cheapest
 	// check here, and the one that pays for the whole command on its own.
 	if rep.mainRef != "" {
-		if paths := o.conflicts(myHead, rep.mainRef); len(paths) > 0 {
+		if paths := o.conflicts(myHead, rep.mainRef, only); len(paths) > 0 {
 			rep.Conflicts = append(rep.Conflicts, overlapConflict{A: myLane, B: rep.mainRef, Paths: paths})
 			verdicts = append(verdicts, []string{ui.Cell(ui.Err, "✗"), rep.mainRef, strings.Join(paths, " ")})
 		}
@@ -920,7 +954,12 @@ func (o *overlap) lane(top string, lanes []Entry, only string, brief, asJSON boo
 		}
 		overlapBody(bodyCells)
 		overlapProse(intents)
-		overlapVerdicts(verdicts)
+		if len(verdicts) > 0 {
+			// Headed even here: a bare ✗ row under a ⚠ table reads as one more
+			// finding, and it is a different signal.
+			ui.Warn("merge-tree already conflicts (committed work only):")
+			overlapVerdicts(verdicts)
+		}
 		return rep.done()
 	}
 
@@ -990,7 +1029,7 @@ func (o *overlap) matrix(lanes []Entry, only string, brief, asJSON bool, named s
 						body = append(body, []string{ui.Cell(ui.Muted, "·"), a, b, ui.Cell(ui.Muted, f.path), "elsewhere in the file"})
 					}
 				}
-				if paths := o.conflicts(o.tip(sides[i]), o.tip(sides[j])); len(paths) > 0 {
+				if paths := o.conflicts(o.tip(sides[i]), o.tip(sides[j]), only); len(paths) > 0 {
 					rep.Conflicts = append(rep.Conflicts, overlapConflict{A: a, B: b, Paths: paths})
 				}
 			}
@@ -1063,7 +1102,7 @@ func (e *Env) overlapPair(a, b, only string, brief, asJSON, committedOnly bool) 
 		return exitcode.Usagef("%s and %s are the same lane", a, b)
 	}
 	if only != "" {
-		only = repoRelative(only, ea.Main, e.Cwd)
+		only = pairRelative(only, ea, eb, e.Cwd)
 	}
 	o := e.newOverlap(ea.Main, committedOnly)
 	return o.matrix([]Entry{ea, eb}, only, brief, asJSON, a+" "+b)

@@ -4894,3 +4894,61 @@ squash_rival() {
   [[ "$output" == *'"mode": "matrix"'* ]]
   [[ "$output" == *'"reader": null'* ]]
 }
+
+@test "overlap spells a non-ASCII filename one way on every side" {
+  # `core.quotePath` is on by default, so `ls-files` and `merge-tree` hand back
+  # `"caf\303\251.md"` where the diff — asked with it off — says `café.md`. An
+  # untracked add/add on such a file went unmatched, and the verdict carried
+  # two spellings of one file into a document that is a contract.
+  mkoverlap
+  echo from-rival >"$RIVAL/café.md"
+  git -C "$RIVAL" add café.md
+  git -C "$RIVAL" commit -qm "rival: adds a file with an accent"
+  echo from-snug >"$SNUG/café.md"                   # untracked
+  cd "$SNUG"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"café.md the whole file"* ]]
+  git -C "$SNUG" add café.md
+  git -C "$SNUG" commit -qm "snug: adds it too"
+  run --separate-stderr "$WT" overlap --json
+  [[ "$output" == *'"paths": [
+        "café.md"'* ]] || fail "merge-tree spelled it differently: $output"
+  [[ "$output" != *'\\303'* ]]
+}
+
+@test "overlap --pair --path is anchored on the repo, wherever you stand" {
+  mkoverlap
+  cd "$SNUG"
+  wt_run overlap --pair snug rival --path doc.md
+  [ "$status" -eq 4 ]
+  cd "$TMP"
+  wt_run overlap --pair snug rival --path doc.md   # already repo-relative
+  [ "$status" -eq 4 ]
+  wt_run overlap --pair snug rival --path "$SNUG/doc.md"
+  [ "$status" -eq 4 ]
+  wt_run overlap --pair snug rival --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "overlap --path scopes the merge-tree verdict to that file too" {
+  # Silence on a clear file is the hook shape's whole answer; a conflict in
+  # ANOTHER file is not this file's news, and exit 4 on it would be a wrong
+  # answer rather than a missing one.
+  mkoverlap
+  setline "$FAR/doc.md" 10 10-far-too                 # far and rival now both commit line 10
+  git -C "$FAR" commit -qam "far: the top of doc as well"
+  cd "$RIVAL"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  wt_run overlap --path doc.md
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"merge-tree already conflicts"* ]]
+  [[ "$output" == *"✗"* ]]
+  cd "$OV"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
