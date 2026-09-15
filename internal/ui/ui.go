@@ -18,6 +18,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/hausfold/snug"
@@ -90,6 +91,24 @@ const gutter = 3
 // keeps every name at full length for whatever reads it next.
 func Table(cols []Col, rows [][]string) {
 	printer.PrintData(snug.Table{Cols: cols, Rows: rows, Indent: gutter, Header: true})
+}
+
+// Grid is Table without the header row: a report read by shape, where a row of
+// column names over three rows of data is furniture — snug's own default, and
+// the family's. Each Col still carries a Head, because that is the label the
+// stacked fallback prints beside every value when the window is too narrow for
+// any table at all.
+func Grid(cols []Col, rows [][]string) {
+	printer.PrintData(snug.Table{Cols: cols, Rows: rows, Indent: gutter})
+}
+
+// Report prints one line of a report to STDOUT in a role: the prose half of a
+// table — a lane's intent, a landing order — meant to be copied whole, which a
+// cell would cut. Painted only where stdout is a terminal, exactly as Table
+// is; a pipe gets the words and no escapes.
+func Report(r Role, format string, a ...any) {
+	th := printer.OutTheme()
+	printer.Data("%s%s%s\n", th.SGR(r), fmt.Sprintf(format, a...), th.Reset())
 }
 
 // The roles a report paints per CELL rather than per column, and the tag that

@@ -21,7 +21,9 @@ import (
 
 func main() {
 	err := commands.Run(os.Args[1:])
-	if err != nil {
+	// An error with no message is a bare exit code (exitcode.Code): the verb
+	// has said everything it had to, and the code is the answer.
+	if err != nil && err.Error() != "" {
 		ui.Fail(err.Error())
 	}
 	os.Exit(exitcode.Of(err))
