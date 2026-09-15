@@ -163,9 +163,14 @@ jobs:
       # third-party action on a job a release reaches; and what this job does
       # there is check `vendorHash` — nothing in it signs or publishes.
       #
-      # ⚠️ Not a swap to make in pounce: its Determinate pin is load-bearing
-      # for the macOS build sandbox, and nobody has measured quick-install on a
-      # Mac runner at all.
+      # ⚠️ The `sandbox = true` above is a LINUX default and not a property
+      # of this installer: off Linux nix defaults it to FALSE and neither
+      # installer writes the line. The reason this comment used to give for
+      # leaving pounce on Determinate — that its installer relaxes a macOS
+      # build sandbox — was never true, and hausfold/pounce#142 has since
+      # taken this same action to macos-15 at 5.1s against 68.2s. Nothing in
+      # the family's gate installs Determinate now; workshop `docs/ci.md` §
+      # The Nix installer carries both platforms' numbers.
       - uses: nixbuild/nix-quick-install-action@v35
       - name: vendorHash matches go.mod
         run: nix build .#default.goModules --no-link --print-build-logs
