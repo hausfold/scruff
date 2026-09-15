@@ -170,7 +170,7 @@ jobs:
       # build sandbox — was never true, and hausfold/pounce#142 has since
       # taken this same action to macos-15 at 5.1s against 68.2s. Nothing in
       # the family's gate installs Determinate now; workshop `docs/ci.md` §
-      # The Nix installer carries both platforms' numbers.
+      # The Nix store cache opens with both platforms' numbers.
       - uses: nixbuild/nix-quick-install-action@v35
       - name: vendorHash matches go.mod
         run: nix build .#default.goModules --no-link --print-build-logs
