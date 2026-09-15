@@ -1,13 +1,18 @@
 package commands
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/hausfold/scruff/internal/exitcode"
 	"github.com/hausfold/scruff/internal/gitx"
@@ -435,21 +440,32 @@ func piTrusted(doc map[string]bool, path string) bool {
 
 // ── where a lane's conversation lives ────────────────────────────────────────
 
-// projDir is Claude Code's transcript directory for a cwd: it encodes the
-// project by path, replacing every '/' and '.' with '-'.
-func projDir(cwd string) string {
+// projStore is Claude Code's transcript store: one directory per cwd.
+func projStore() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
 	}
-	enc := strings.Map(func(r rune) rune {
+	return filepath.Join(home, ".claude", "projects")
+}
+
+// projEnc is how Claude Code names a cwd's transcript directory: every '/' and
+// '.' becomes '-'.
+//
+// Lossy, and that matters below — `a.b` and `a-b` land on the same name, so
+// nothing here ever decodes one back into a path. A directory found by its name
+// is only ever a CANDIDATE; the cwd it recorded inside is what confirms it.
+func projEnc(cwd string) string {
+	return strings.Map(func(r rune) rune {
 		if r == '/' || r == '.' {
 			return '-'
 		}
 		return r
 	}, cwd)
-	return filepath.Join(home, ".claude", "projects", enc)
 }
+
+// projDir is Claude Code's transcript directory for a cwd.
+func projDir(cwd string) string { return filepath.Join(projStore(), projEnc(cwd)) }
 
 // agentHasChat answers only when it is knowable.
 //
@@ -539,6 +555,245 @@ func (e *Env) jsonChat(agent, wt string) string {
 // cheap cwd → transcript-directory mapping; the others keep private session
 // indexes and their own cwd-filtered pickers are the authority (§5.3).
 func agentProbeable(agent string) bool { return agent == "claude" }
+
+// ── a conversation the checkout moved out from under ─────────────────────────
+
+// Claude Code keys its transcripts on the EXACT cwd, and scruff moves a lane's
+// checkout on its own — so a lane can end up standing somewhere the client has
+// never seen, with a thousand messages intact one directory away and no way to
+// reach them: `claude --continue` says "No conversation found to continue" and
+// exits 1 into an empty pane (issue #129).
+//
+// Two things move a checkout. `doctor --migrate-base` moves the whole base and
+// carries the transcripts with it, because it knows exactly which path became
+// which. The other is this one: a lane whose registry row was lost is
+// rediscovered as an orphan branch, and the path discover SYNTHESISES for it is
+// today's bucket convention — which is not where the checkout was when its
+// agent last ran. The bucket has been three things (the spawning pane's
+// directory, the main checkout's basename, and SPEC.md §4's `<owner>-<repo>`
+// slug), so a lane old enough has outlived its own path and nobody recorded the
+// move. The old path has to be found.
+
+// strandedChat is the transcript of a lane that used to live somewhere else
+// under the same base: the directory holding it, and the path it was recorded
+// at. Both are "" unless scruff is sure, and five things have to hold:
+//
+//  1. Same base, same lane NAME, different bucket. The name is what a lane
+//     keeps across a bucket change, and the bucket is the only thing that
+//     changed.
+//  2. The candidate's own recorded cwd says so — read out of the transcript,
+//     never decoded from the directory name, which cannot be decoded.
+//  3. The branch it recorded is this lane's branch, where it recorded one.
+//  4. Nothing else answers to that old path: no directory on disk, no registry
+//     row. `scruff child` gives a child lane its parent's NAME on purpose, so
+//     two lanes of one name in different repos is ordinary — and stealing a
+//     live pane's conversation would be far worse than the empty lane this
+//     fixes.
+//  5. Exactly one candidate survives. Two is a question only the user can
+//     answer, and `scruff doctor` is where it gets asked.
+func strandedChat(store, base, path, branch string, inUse func(string) bool) (dir, cwd string) {
+	base, path = filepath.Clean(base), filepath.Clean(path)
+	if store == "" || base == "" || filepath.Dir(filepath.Dir(path)) != base {
+		return "", "" // not a `$BASE/<bucket>/<name>` lane; nothing to reason about
+	}
+	name := filepath.Base(path)
+	prefix, suffix, own := projEnc(base)+"-", "-"+projEnc(name), projEnc(path)
+	ents, err := os.ReadDir(store)
+	if err != nil {
+		return "", ""
+	}
+	for _, ent := range ents {
+		n := ent.Name()
+		if !ent.IsDir() || n == own || !strings.HasPrefix(n, prefix) || !strings.HasSuffix(n, suffix) {
+			continue
+		}
+		was, wasBranch := transcriptOrigin(filepath.Join(store, n))
+		if was = filepath.Clean(was); was == "." || was == path {
+			continue
+		}
+		if filepath.Dir(filepath.Dir(was)) != base || filepath.Base(was) != name {
+			continue // the name matched by accident: '.' and '/' encode alike
+		}
+		if wasBranch != "" && wasBranch != branch {
+			continue
+		}
+		if _, err := os.Stat(was); err == nil {
+			continue // a checkout is standing there — that conversation is its own
+		}
+		if inUse != nil && inUse(was) {
+			continue // parked, but another lane's row still names it
+		}
+		if dir != "" {
+			return "", ""
+		}
+		dir, cwd = filepath.Join(store, n), was
+	}
+	return dir, cwd
+}
+
+// transcriptOrigin is the cwd and branch a transcript RECORDS, from its newest
+// session file.
+//
+// Claude writes one JSON object per line and the first few are session
+// metadata with no cwd on them, so this reads a bounded prefix rather than the
+// first line — and stops the moment it has both. Decoded off the stream rather
+// than scanned by line because a single line routinely runs past any sane line
+// buffer (a tool result is one object).
+func transcriptOrigin(dir string) (cwd, branch string) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", ""
+	}
+	var newest string
+	var stamp time.Time
+	for _, ent := range ents {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".jsonl") {
+			continue
+		}
+		info, err := ent.Info()
+		if err != nil {
+			continue
+		}
+		if newest == "" || info.ModTime().After(stamp) {
+			newest, stamp = filepath.Join(dir, ent.Name()), info.ModTime()
+		}
+	}
+	if newest == "" {
+		return "", ""
+	}
+	f, err := os.Open(newest)
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+	dec := json.NewDecoder(bufio.NewReader(f))
+	for i := 0; i < 64; i++ {
+		var rec struct {
+			Cwd       string `json:"cwd"`
+			GitBranch string `json:"gitBranch"`
+		}
+		if err := dec.Decode(&rec); err != nil {
+			break
+		}
+		if cwd == "" {
+			cwd = rec.Cwd
+		}
+		if branch == "" {
+			branch = rec.GitBranch
+		}
+		if cwd != "" && branch != "" {
+			break
+		}
+	}
+	return cwd, branch
+}
+
+// adoptChat puts a stranded conversation at the path the lane lives at now.
+//
+// A COPY, never a move, and never over a conversation that is already there.
+// The match above is strong evidence, not proof, so the failure direction is
+// invariant 1's: if it is wrong, nothing was lost and the line resume prints
+// names the directory it came from, which is one `rm -rf` to undo. Staged in a
+// sibling directory and renamed into place, because a half-copied transcript at
+// the real name is one `agentHasChat` reads as a conversation.
+func adoptChat(from, to string) error {
+	if _, err := os.Stat(to); err == nil {
+		return fmt.Errorf("%s already holds a conversation", to)
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(to), ".scruff-adopting-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging) // a no-op once the rename below has emptied it
+	tmp := filepath.Join(staging, filepath.Base(to))
+	if err := copyTree(from, tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, to)
+}
+
+func copyTree(from, to string) error {
+	return filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, p)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(to, rel)
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(dst, 0o755)
+		case !d.Type().IsRegular():
+			return nil // a transcript is plain files; a link is not ours to follow
+		default:
+			return copyFile(p, dst)
+		}
+	})
+}
+
+func copyFile(from, to string) error {
+	info, err := os.Stat(from)
+	if err != nil {
+		return err
+	}
+	src, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return err
+	}
+	return dst.Close()
+}
+
+// strandedChatOf is strandedChat for one discovered lane: a detector, with no
+// side effects, so `scruff doctor` can report what it would take without
+// taking it.
+func (e *Env) strandedChatOf(agent string, entry Entry) (dir, was string) {
+	if !agentProbeable(agent) {
+		return "", ""
+	}
+	rows, _ := e.Reg.Load()
+	claimed := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		// This lane's OWN row is skipped: when the checkout moved, the row is
+		// routinely the thing still naming the old path (discover corrects the
+		// entry against git, the row keeps its guess until resume rewrites it).
+		// Counting it would make every real case look like somebody else's.
+		if row.Main == entry.Main && row.Branch == entry.Branch {
+			continue
+		}
+		claimed[filepath.Clean(row.Path)] = true
+	}
+	return strandedChat(projStore(), e.Base, entry.Path, entry.Branch, func(p string) bool { return claimed[p] })
+}
+
+// recoverChat brings a lane's stranded conversation to the path the lane lives
+// at now, and reports where it came from. "" is "there was nothing to do",
+// which is the ordinary answer.
+func (e *Env) recoverChat(agent string, entry Entry) string {
+	dir, was := e.strandedChatOf(agent, entry)
+	if dir == "" {
+		return ""
+	}
+	if err := adoptChat(dir, projDir(entry.Path)); err != nil {
+		ui.Warn("this lane's conversation is at %s and could not be copied here (%v) — `cp -R %s %s` does it by hand",
+			was, err, dir, projDir(entry.Path))
+		return ""
+	}
+	return was
+}
 
 // agentForPath is the recorded client for a lane, resolved BEFORE a parked
 // checkout is re-registered: a five-column registry row predates the client

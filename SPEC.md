@@ -588,6 +588,39 @@ deliberately: it states what must NOT move.)
 
 ---
 
+**A checkout that moves takes its conversation with it.** Clients key history on
+the cwd — Claude Code exactly, at `~/.claude/projects/<cwd, '/' and '.' as '-'>`
+— so a lane standing at a new path is a directory its client has never seen:
+`--continue` there is "No conversation found to continue" and exit 1, into a
+pane that closes, with the history intact and unreachable one directory away
+(#129). Three bucket schemes have shipped, so lanes old enough have outlived
+their own paths. Two movers, two answers:
+
+- **`doctor --migrate-base` knows which path became which**, so it renames each
+  lane's transcript directory alongside the checkout. Last, after every rollback
+  point, and best effort — a transcript that cannot move costs a search, and
+  must never cost the migration.
+- **Nothing recorded the rest.** A lane whose registry row was lost is
+  rediscovered as an orphan branch, and the path `discover` SYNTHESISES for it
+  is *today's* convention rather than where the checkout stood when its agent
+  last ran. So `scruff <name>` looks: same base, same lane name, a different
+  bucket — confirmed against the cwd and branch the transcript itself records,
+  never by decoding a directory name that cannot be decoded. It refuses if
+  anything else answers to that old path (a checkout on disk, a registry row —
+  `scruff child` gives a child lane its parent's NAME, so one name in two
+  buckets is ordinary), and refuses if two candidates match. One match is
+  **copied, never moved**, and the line names where it came from: the match is
+  evidence rather than proof, so the failure direction stays invariant 1's.
+  `scruff doctor` reports the same match as `orphan-chat` and copies nothing.
+
+**A lane with nothing to continue opens a fresh session.** `last` (§5.3) into a
+checkout with no transcript is that same exit 1, and a new conversation in the
+right directory is strictly better than a pane that closes. Said only where the
+client's store can prove the absence — `has_chat`, so Codex and OpenCode keep
+their pickers — and `--pick` is the user asking by hand, which is left alone.
+
+---
+
 ## 5. Adapters — one template-variable set, four kinds
 
 Everything variable becomes a TOML file in a directory: **agent clients**, **forges**,
@@ -963,7 +996,8 @@ the main checkout and that is the branch every landed verdict is measured
 against. Then the findings: remotes that disagree about who the repo is and a
 repo with no remote at all (§4, `fork-remotes` and `no-remote` — the two
 situations in which nothing can ever be reaped on PR evidence), stale registry
-rows, stray checkouts, orphan branches, and disk used per repo
+rows, stray checkouts, orphan branches, lanes whose conversation was left at a
+path they no longer live at (`orphan-chat`, §4), and disk used per repo
 (`du`-equivalent, walked in Go, counting allocated blocks so a reflinked tree
 reads as the near-nothing it costs).
 

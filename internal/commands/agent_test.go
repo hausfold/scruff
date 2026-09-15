@@ -363,3 +363,179 @@ func TestTrustWorktreePiKeepsPisFileMode(t *testing.T) {
 		t.Errorf("mode = %o, want 644", got)
 	}
 }
+
+// ── a conversation the checkout moved out from under (#129) ──────────────────
+//
+// The matcher is the whole safety of the recovery: it copies somebody's
+// conversation into a lane, so every case below is about what it must REFUSE.
+// `scruff child` names a child lane after the pane that spawned it, so two
+// lanes of one name in different buckets is an ordinary machine, not a
+// contrived one.
+
+// plantChat writes a transcript the way Claude Code would: a directory named
+// for the cwd, holding a .jsonl whose first records are metadata with no cwd on
+// them at all.
+func plantChat(t *testing.T, store, cwd, branch string) string {
+	t.Helper()
+	dir := filepath.Join(store, projEnc(cwd))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"type":"mode","sessionId":"s1"}` + "\n" +
+		`{"type":"summary","summary":"a lane"}` + "\n" +
+		`{"type":"user","sessionId":"s1","cwd":"` + cwd + `","gitBranch":"` + branch + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestStrandedChatFindsTheLanesOwnOldPath(t *testing.T) {
+	store, base := t.TempDir(), t.TempDir()
+	old := filepath.Join(base, "workshop", "gallery")
+	now := filepath.Join(base, "hausfold-hausfold.co", "gallery")
+	want := plantChat(t, store, old, "worktree-gallery")
+
+	dir, cwd := strandedChat(store, base, now, "worktree-gallery", nil)
+	if dir != want || cwd != old {
+		t.Fatalf("strandedChat = (%q, %q), want (%q, %q)", dir, cwd, want, old)
+	}
+}
+
+// Everything the matcher must walk past, one reason each.
+func TestStrandedChatRefusesEverythingItCannotBeSureOf(t *testing.T) {
+	branch := "worktree-gallery"
+	cases := []struct {
+		why   string
+		setup func(t *testing.T, store, base, now string) func(string) bool
+	}{
+		{"a conversation whose checkout is still standing there", func(t *testing.T, store, base, now string) func(string) bool {
+			other := filepath.Join(base, "hausfold-haus", "gallery")
+			if err := os.MkdirAll(other, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			plantChat(t, store, other, branch)
+			return nil
+		}},
+		{"a parked lane of the same name that a registry row still claims", func(t *testing.T, store, base, now string) func(string) bool {
+			other := filepath.Join(base, "hausfold-haus", "gallery")
+			plantChat(t, store, other, branch)
+			return func(p string) bool { return p == other }
+		}},
+		{"a transcript recorded on another branch", func(t *testing.T, store, base, now string) func(string) bool {
+			plantChat(t, store, filepath.Join(base, "workshop", "gallery"), "worktree-something-else")
+			return nil
+		}},
+		{"two old paths, which is a question only the user can answer", func(t *testing.T, store, base, now string) func(string) bool {
+			plantChat(t, store, filepath.Join(base, "workshop", "gallery"), branch)
+			plantChat(t, store, filepath.Join(base, "hausfold.co", "gallery"), branch)
+			return nil
+		}},
+		{"a lane of another name under the same bucket", func(t *testing.T, store, base, now string) func(string) bool {
+			plantChat(t, store, filepath.Join(base, "workshop", "other-lane"), branch)
+			return nil
+		}},
+		{"a path outside the base entirely", func(t *testing.T, store, base, now string) func(string) bool {
+			plantChat(t, store, filepath.Join(t.TempDir(), "workshop", "gallery"), branch)
+			return nil
+		}},
+		{"a deeper path whose encoded name matches by accident", func(t *testing.T, store, base, now string) func(string) bool {
+			plantChat(t, store, filepath.Join(base, "workshop", "nested", "gallery"), branch)
+			return nil
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.why, func(t *testing.T) {
+			store, base := t.TempDir(), t.TempDir()
+			now := filepath.Join(base, "hausfold-hausfold.co", "gallery")
+			inUse := c.setup(t, store, base, now)
+			if dir, cwd := strandedChat(store, base, now, branch, inUse); dir != "" || cwd != "" {
+				t.Fatalf("adopted %s (%s) — %s", cwd, dir, c.why)
+			}
+		})
+	}
+}
+
+// The lossy encoding, pointed at the matcher: `hausfold.co` and `hausfold-co`
+// are one directory name, so a candidate is only ever confirmed by the cwd the
+// transcript itself recorded.
+func TestStrandedChatConfirmsAgainstTheRecordedCwd(t *testing.T) {
+	store, base := t.TempDir(), t.TempDir()
+	now := filepath.Join(base, "hausfold-hausfold.co", "gallery")
+	old := filepath.Join(base, "hausfold.co", "gallery")
+	want := plantChat(t, store, old, "worktree-gallery")
+	// A directory of the right shape whose file says nothing: unusable, and it
+	// must not make the real one ambiguous.
+	empty := filepath.Join(store, projEnc(filepath.Join(base, "quiet", "gallery")))
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, cwd := strandedChat(store, base, now, "worktree-gallery", nil)
+	if dir != want || cwd != old {
+		t.Fatalf("strandedChat = (%q, %q), want (%q, %q)", dir, cwd, want, old)
+	}
+}
+
+// A transcript that predates gitBranch still resumes: the cwd already pins the
+// base and the lane name, and refusing on a field the client used not to write
+// would strand exactly the oldest lanes this recovers.
+func TestStrandedChatAcceptsATranscriptWithNoBranchRecorded(t *testing.T) {
+	store, base := t.TempDir(), t.TempDir()
+	old := filepath.Join(base, "workshop", "gallery")
+	dir := filepath.Join(store, projEnc(old))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"type":"user","cwd":"` + old + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "s1.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, cwd := strandedChat(store, base, filepath.Join(base, "acme-alpha", "gallery"), "worktree-gallery", nil); got != dir {
+		t.Fatalf("strandedChat = (%q, %q), want %q", got, cwd, dir)
+	}
+}
+
+func TestAdoptChatCopiesAndNeverOverwrites(t *testing.T) {
+	store, base := t.TempDir(), t.TempDir()
+	old := filepath.Join(base, "workshop", "gallery")
+	from := plantChat(t, store, old, "worktree-gallery")
+	// Claude keeps a per-session subdirectory beside the file; the copy is a
+	// tree, not a file.
+	if err := os.MkdirAll(filepath.Join(from, "s1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "s1", "note.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.Join(store, projEnc(filepath.Join(base, "acme-alpha", "gallery")))
+
+	if err := adoptChat(from, to); err != nil {
+		t.Fatalf("adoptChat: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(to, "s1.jsonl")); err != nil {
+		t.Fatalf("the transcript did not arrive: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(to, "s1", "note.txt")); err != nil || string(b) != "hi" {
+		t.Fatalf("the session directory did not arrive: %q %v", b, err)
+	}
+	// A copy: the original is still where it was, so a wrong guess costs a
+	// `rm -rf` and never a conversation.
+	if _, err := os.Stat(filepath.Join(from, "s1.jsonl")); err != nil {
+		t.Fatalf("the original was moved, not copied: %v", err)
+	}
+	// Nothing staged is left behind beside it.
+	ents, err := os.ReadDir(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range ents {
+		if strings.HasPrefix(ent.Name(), ".scruff-adopting-") {
+			t.Fatalf("staging directory left behind: %s", ent.Name())
+		}
+	}
+	// And a second run never writes over the conversation that is now there.
+	if err := adoptChat(from, to); err == nil {
+		t.Fatal("adoptChat wrote over a conversation that already existed")
+	}
+}

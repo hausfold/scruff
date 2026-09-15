@@ -81,11 +81,30 @@ func (e *Env) resumeEntry(entry Entry, pick bool) error {
 	// rebuilt either way, so the branch's files are on disk; this only decides
 	// which directory the client's picker opens in.
 	chat := e.chatHome(agent, entry.Path)
+	// Nothing here and no parent to fall back on: the conversation may be at a
+	// path this lane has since moved off, and if it is, it comes with it. Done
+	// before the argv below is resolved, because bringing it over is what makes
+	// "continue the newest conversation here" an answerable question again.
+	if chat == entry.Path && !agentHasChat(agent, entry.Path) {
+		if was := e.recoverChat(agent, entry); was != "" {
+			ui.Say("the checkout moved since this lane last ran — brought its conversation over from %s", was)
+		}
+	}
 	// Whether the chat is the lane's own is exactly the question "can scruff name
 	// the conversation?" — one checkout only this lane's agent ever ran in has
 	// one newest conversation and that is it; a shared parent has many, and
 	// only the user can say which.
 	argv := resumeArgv(spec, chat == entry.Path, pick)
+	// Still nothing to continue. `claude --continue` in a directory with no
+	// transcript is not a resume, it is an exit 1 into a pane that closes on
+	// "No conversation found to continue" — so a lane that has never been
+	// talked in opens a fresh session instead. Only ever said about a client
+	// whose store scruff can actually read (agentProbeable); `--pick` is the
+	// user asking for the picker by hand and is left alone.
+	if chat == entry.Path && !pick && agentProbeable(agent) && !agentHasChat(agent, entry.Path) && len(spec.open) > 0 {
+		ui.Say("no conversation in this lane yet — %s opens a fresh one", agent)
+		argv = spec.open
+	}
 
 	if chat != entry.Path {
 		ui.Say("no chat in this lane — it was spawned from a pane in %s", chat)
