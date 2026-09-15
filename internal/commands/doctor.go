@@ -177,9 +177,14 @@ func (e *Env) migrateBase() error {
 	// write goes to a handle on the file's NEW location, still under the lock
 	// taken at the old one (the lock file moved too; flock travels with the
 	// inode, so a mutation racing the move is still excluded).
+	var moved [][2]string
 	for i := range rows {
+		was := rows[i].Path
 		rows[i].Path = rewritePrefix(legacy, newBase, rows[i].Path)
 		rows[i].Parent = rewritePrefix(legacy, newBase, rows[i].Parent)
+		if rows[i].Path != was && agentProbeable(rows[i].Agent) {
+			moved = append(moved, [2]string{was, rows[i].Path})
+		}
 	}
 	newReg, err := registry.Open(filepath.Join(newBase, "registry.tsv"))
 	if err != nil {
@@ -194,8 +199,42 @@ func (e *Env) migrateBase() error {
 		return rollback(fmt.Errorf("the legacy-path symlink: %w", err))
 	}
 
+	// Step 7: the conversations come too. Claude Code keys its transcripts on
+	// the EXACT cwd, so a lane whose path was just rewritten would otherwise
+	// resume into a directory the client has never seen — the branch intact and
+	// a thousand messages unreachable one directory away (#129). This is the
+	// one mover that knows precisely which path became which, so it carries
+	// them instead of leaving them to be found later.
+	//
+	// Last, after every rollback point, and best effort: a transcript that
+	// cannot move costs a search (strandedChat finds it from the new path), and
+	// must never cost the migration. A rename rather than a copy — the old base
+	// is a symlink to this one now, so there is nothing left to be careful of,
+	// and copying every conversation would duplicate real disk.
+	carried := 0
+	for _, m := range moved {
+		from, to := projDir(m[0]), projDir(m[1])
+		if _, err := os.Stat(from); err != nil {
+			continue // no conversation there; most lanes
+		}
+		if _, err := os.Stat(to); err == nil {
+			continue // the new path already has one — two, and no merge to make
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			ui.Warn("the conversation for %s stayed at %s (%v) — resuming the lane brings it over", m[1], from, err)
+			continue
+		}
+		carried++
+	}
+
 	ui.Say("base moved: %s → %s", legacy, newBase)
 	ui.Say("  %d checkout(s) re-pointed with git worktree repair", repaired)
+	if carried > 0 {
+		ui.Say("  %d conversation(s) moved with them", carried)
+	}
 	if linkFailures > 0 {
 		ui.Say("  %d checkout(s) need their link repaired by hand — the work moved with the tree either way", linkFailures)
 		ui.Say("  exit 3: the move completed with %d degraded lane link(s)", linkFailures)

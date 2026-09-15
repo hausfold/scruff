@@ -188,7 +188,7 @@ type diagSummary struct {
 // as many words, and inventing a `scruff remote` wrapper for it would be scruff
 // growing a git porcelain it has no reason to own.
 type diagFinding struct {
-	Kind   string `json:"kind"` // legacy-base | stale-row | stray-checkout | orphan-branch | fork-remotes | no-remote
+	Kind   string `json:"kind"` // legacy-base | stale-row | stray-checkout | orphan-branch | orphan-chat | fork-remotes | no-remote
 	Repo   string `json:"repo,omitempty"`
 	Name   string `json:"name,omitempty"`
 	Branch string `json:"branch,omitempty"`
@@ -677,6 +677,24 @@ func (e *Env) laneFindings(entries []Entry) []diagFinding {
 				Remedy: "scruff " + entry.Name() + " (resumes it and writes the row back)",
 			})
 		}
+		// A conversation left at a path this lane has moved off. Invisible
+		// otherwise — the branch, the checkout and the row all look right, and
+		// the only symptom is an empty pane that exits 1 the next time somebody
+		// resumes it. Asked only of a lane that would open its OWN checkout: one
+		// resuming into a parent's pane (a `scruff child`) has no conversation
+		// here by design, and saying so would be a finding on every child lane.
+		if agent := e.agentForPath(entry.Path); agentProbeable(agent) &&
+			!agentHasChat(agent, entry.Path) && e.chatHome(agent, entry.Path) == entry.Path {
+			if _, was := e.strandedChatOf(agent, entry); was != "" {
+				out = append(out, diagFinding{
+					Kind: "orphan-chat", Repo: repo, Name: entry.Name(),
+					Branch: entry.Branch, Path: entry.Path,
+					Detail: "the checkout moved and its conversation did not — the transcript is at " + was +
+						", and the client keys history on the exact path, so resuming here opens an empty session",
+					Remedy: "scruff " + entry.Name() + " (copies the conversation to where the lane lives now)",
+				})
+			}
+		}
 	}
 
 	// A row whose branch no longer means anything. `branchAlive` is the same
@@ -1069,6 +1087,8 @@ func findingLabel(kind string) string {
 		return "stray checkout"
 	case "orphan-branch":
 		return "orphan branch"
+	case "orphan-chat":
+		return "orphan chat"
 	case "fork-remotes":
 		return "fork remotes"
 	case "no-remote":
