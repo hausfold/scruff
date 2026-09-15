@@ -141,7 +141,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v23
+      # 8s of a 27s job went on installing Nix, and this lands in under a
+      # second — the installer haus and nebelung already run. It does not move
+      # this repo's GATE, which is the two-minute macOS test job in the same
+      # run, so what it buys is runner time and one installer across the
+      # family rather than a faster PR. snug's #20 is the other half and the
+      # one where the seconds show.
+      #
+      # It is NOT the same Nix, and the difference was read off a run rather
+      # than assumed — hausfold/snug#20 printed `nix config show` under it on
+      # the same runner image: upstream 2.34.7 against `nix-installer-action`'s
+      # Determinate Nix, single-user with no daemon and `build-users-group`
+      # empty, so the builder is `runner` itself. Flakes and `nix-command` are
+      # on, and `sandbox = true` survives single-user mode because the runner
+      # allows unprivileged user namespaces. The step below builds a
+      # fixed-output derivation, which fetches the module graph from inside
+      # that sandbox either way.
+      #
+      # `release.yml` calls this whole workflow, so the installer is in the
+      # release path as well. Pinned to a tag, which is what rule 4 asks of a
+      # third-party action on a job a release reaches; and what this job does
+      # there is check `vendorHash` — nothing in it signs or publishes.
+      #
+      # ⚠️ Not a swap to make in pounce: its Determinate pin is load-bearing
+      # for the macOS build sandbox, and nobody has measured quick-install on a
+      # Mac runner at all.
+      - uses: nixbuild/nix-quick-install-action@v35
       - name: vendorHash matches go.mod
         run: nix build .#default.goModules --no-link --print-build-logs
 
