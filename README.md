@@ -28,6 +28,7 @@ cd "$(scruff new fix-flaky-test)"  # a lane on this repo: new checkout, new bran
 scruff                             # every lane you've got going, live or parked, across every repo
 scruff fix-flaky-test              # back later — rebuild the checkout, reopen the agent, where you left off
 scruff reap                        # sweep every lane whose branch landed and nobody's standing in
+scruff overlap                     # what the OTHER lanes changed, and where their edits and yours share a region
 ```
 
 **And never `git stash` again.** The stash stack lives in the shared `.git`

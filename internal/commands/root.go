@@ -58,6 +58,17 @@ A LANE is one agent's branch, checkout and pane, from create to reaped.
                           checkout, leaves the old path a symlink for one release
   scruff watch --json       lifecycle events on stdout, one NDJSON object per line
   scruff reship [name]      push a branch that outran its merged PR, open the follow-up
+  scruff overlap            what the OTHER lanes on this repo have already changed,
+                          and where their edits and yours land in the same region
+                          — measured from the object store, uncommitted work
+                          included, nothing declared. Advisory: it exits 3 for
+                          the same file, 4 for the same region or a merge-tree
+                          conflict, and refuses nothing
+                          --brief one line per lane · --path <file> that file
+                          only, and silent when it is clear · --committed-only
+                          skip the working trees · --pair <a> <b> two named
+                          lanes · --json the same as data
+                          from the MAIN checkout: every pair of lanes sharing a file
   scruff runtime up <name>  stand up a lane's runtime-isolation backend
                           --backend <id> (required — never automatic)
                           tart is built in: a headless macOS per lane
@@ -221,6 +232,11 @@ func Run(args []string) error {
 	case "runtime":
 		return env.RuntimeCmd(args[1:])
 
+	// Read-only, and the one verb whose non-zero exit is a FINDING (3, 4)
+	// rather than a refusal — SPEC.md §7.
+	case "overlap":
+		return env.Overlap(args[1:])
+
 	// A3 of the family agent surface. Not `docs agent`, which SPEC.md §14.5
 	// reserved before this landed — see skill.go for which name won and why.
 	case "skill":
@@ -307,6 +323,8 @@ var flagWantsValue = map[string]bool{
 	"--derived-name": true,
 	"--dir":          true,
 	"--image":        true,
+	"--pair":         true,
+	"--path":         true,
 	"--pid":          true,
 	"--prompt":       true,
 	"--prompt-file":  true,

@@ -203,8 +203,7 @@ the implied verb. One envelope, so they can version-check without sniffing:
       "behind": 12,
       "landed": { "verdict": "no", "via": null, "confidence": "certain" },
       "post_merge_ahead": { "commits": 0, "pr": 0, "diverged": false },
-      "pr": { "number": 189, "state": "OPEN", "url": "https://…", "checks": "passing" },
-      "overlap": ["frost"]
+      "pr": { "number": 189, "state": "OPEN", "url": "https://…", "checks": "passing" }
     }
   ],
   "warnings": ["forge unreachable: gh exited 4 — PR state is stale (cached 14m ago)"]
@@ -339,7 +338,7 @@ The bash version has exactly two (0 / 1-via-`die`). Consumers need more:
 | 0 | success — including "nothing to do" |
 | 1 | usage / precondition error (bad args, not a git repo) |
 | 2 | **refused for safety** — occupied, dirty, or not provably landed |
-| 3 | degraded — the operation completed but a signal was unavailable (forge down, no `lsof`); pairs with a `warnings[]` entry |
+| 3 | degraded — the operation completed but a signal was unavailable (forge down, no `lsof`); pairs with a `warnings[]` entry. For `scruff overlap`, the quiet finding: the same file, different regions |
 | 4 | conflict found (`scruff overlap`, `scruff batch`) — a finding, not an error |
 | 5 | lock contention / another scruff holds the registry |
 
@@ -1243,33 +1242,70 @@ The *idea* is correct and worth having. The *dependency* isn't, for four reasons
 MIT license means there is nothing to negotiate about implementing the same
 approach — and the approach is one paragraph of public documentation, not IP.
 
-### 7.3 What scruff builds instead
+### 7.3 What scruff built instead
 
 ```
-scruff overlap [--json] [--committed-only] [--pair A B]
+scruff overlap [--brief] [--path <file>] [--committed-only] [--pair <a> <b>] [--json]
 ```
 
-- Pairwise `git merge-tree --write-tree` across **every registry lane,
-  including parked branches**, using each pair's own merge base.
-- **Uncommitted work counts.** Clash's `has_active_changes` is a bare dirty
-  boolean — it doesn't merge-test what the agents are currently typing, which in
-  agent lanes is *most of the interesting content*. scruff builds a throwaway
-  tree per lane with `GIT_INDEX_FILE=$tmp git add -A && git write-tree` (the
-  real index is untouched) and merge-tests those. That's the difference between
-  "these branches will conflict eventually" and "your two running agents are
-  fighting over `src/auth.ts` right now". `--committed-only` skips the worktree
-  stat for speed.
-- Output: conflicting file list per pair, plus the matrix. Exit 4 on conflicts
-  found (a finding, not an error).
-- **Passive surfaces, not blocking ones.** An `overlap` column in `scruff list` and
-  a token in the haus statusline. Optionally a *non-blocking* advisory hook
-  that prints to the transcript. A blocking `PreToolUse` gate is available but is
-  strictly opt-in and never the documented default.
+`internal/commands/overlap.go`, ported whole from the workshop's `bench
+overlap` once that had run for a month against real lanes — every shape below
+was met in production before it was a rule here. Two signals, reported apart
+so they can disagree:
 
-Scaling is a non-issue and should be stated so: N is 3–8, merge-tree is
-milliseconds, 12 lanes is 66 pairs and still sub-second. Cache keyed on the
-pair's `(tipA, tipB, mergeBase)` triple; the temp-tree path additionally keys on
-worktree mtime.
+- **The hunk index.** Every lane's changed line ranges since the pair's merge
+  base, in the *base's* coordinates (the one numbering two diverging trees
+  share), read straight off `git diff -U0` — **uncommitted and untracked work
+  included**, because that is where a lane spends most of its life and it is
+  the half `merge-tree` structurally cannot see. Two ranges within git's own
+  3-line context are the *same region* (`⚠`, what a merge presents as one
+  conflicted hunk); the same file elsewhere is `·`. No throwaway index, no
+  `write-tree`: the diff already carries the base-side numbers for free.
+- **`git merge-tree --write-tree`** between the two committed tips: exact, and
+  the conflicted paths are its stdout. Reported as `✗`, never folded into the
+  index — a lane can be loud above and merge cleanly (both sides converged on
+  the same text), or quiet above and conflict anyway (a rename the index does
+  not follow).
+
+Across **every lane discover() reaches — registry rows, live checkouts, orphan
+`worktree-*` branches — parked ones included**: a parked lane is read from its
+branch, a live one from its checkout, `--committed-only` reads every side from
+its branch. Then three subtractions, all content and none forge, each one a
+false alarm that was actually drawn:
+
+1. **A lane with nothing left to land is not a lane.** `gh pr merge --squash`
+   writes a brand-new commit, so a shipped branch is never an ancestor of main
+   and an unreaped one measures as live for as long as it exists — every lane
+   cut from a lane that just shipped drew a ⚠ against it, over a region the two
+   agreed on to the character. So: merge the lane into main in the object store
+   (`origin/<default>` first, the local branch second), and if main's tree does
+   not move the lane is *spent* and dropped whole. A lane that shipped and then
+   kept committing (`reship`'s `live+N`), or whose checkout is dirty, moves the
+   tree and stays.
+2. **What main landed INTO a side is not that side's work.** After a squash the
+   merge base falls behind main, and a reader cut from the new main carries the
+   landed hunk as if it wrote it. Main's own ranges between base and tip are
+   subtracted — per side, only from a side that actually contains main's
+   commit, by exact range, and never a whole-file add (which would subsume the
+   side's own edits to that file).
+3. **A lane with no commits is counted, not dropped** — spent is for work that
+   landed, not work that never happened, and the just-spawned neighbour is the
+   one worth knowing about before you plan.
+
+Surfaces: inside a lane, *who is in your files*, with each loud lane's last
+commit subject (its intent, for free) and a landing order both sides compute
+identically from facts in the shared repo (pushed first, then the bigger
+diffstat, then the alphabet). From the main checkout, or `--pair`, *lane
+against lane*. `--path <file>` is the hook shape: that file only, and **silence
+when it is clear**. Exit **3** same file · **4** same region or a merge-tree
+conflict, a finding either way; the report is stdout, the narration stderr
+(§2.3), and `--json` is the same report as one document with the exit inside
+it. Advisory to the last line: it refuses nothing, and the blocking `PreToolUse`
+gate §7.2 argued against was never built.
+
+Scaling is a non-issue and is stated so: N is 3–8, the matrix is N² diffs of
+milliseconds each, and the one memo (spent, per side) exists because the reader
+is one half of every pair.
 
 ### 7.4 The real payoff: `overlap` is stage 0 of `batch`
 
@@ -1517,7 +1553,7 @@ and belong in scruff 0.1, not just in haus:
 | | Scope | Done when |
 |---|---|---|
 | **0.1** | Everything in §2 (contracts), §3 (landed, incl. patch-equivalence), §4 (slug identity), §5 (adapters), §10 (cutover). Commands: `list`, `new`, `child`, `spawn`, `resume`, `park`, `unpark`, `reap`, `reship`, `hook create/remove`, `doctor`. | The ported acceptance suite passes unmodified against `scruff`; every haus caller is repointed at it (done, haus#201/#245) with no bash predecessor left to fall back to. |
-| **0.2** | §6 bootstrap (reflink, ports, secrets, trust), §7 `overlap`. | `scruff doctor --write` produces a usable `.scruff.toml` on a stranger's Node repo; `overlap` sees parked branches. |
+| **0.2** | §6 bootstrap (reflink, ports, secrets, trust), §7 `overlap` (built). | `scruff doctor --write` produces a usable `.scruff.toml` on a stranger's Node repo; `overlap` sees parked branches. |
 | **0.3** | §8 `batch` with queue bisection; `bench try-batch` becomes a wrapper. | It names a culprit *pair* on a real red queue. |
 | **0.4** | §14 SDKs: `scruff watch --json`, then TS, then Python/Swift, plus §14.5's `scruff skill --json` + adapter `instructions_file` + `bootstrap.agent_instructions`. scruff stays a binary — SDKs shell out. | A third party ships an agent UI whose only worktree logic is `scruff` — and whose spawned agent knows `scruff child`/`scruff park` without a hand-written CLAUDE.md stanza. |
 | later | Runtime backends, GUI-embeddable library split, §14.3 step 5 (remote transport). | — |

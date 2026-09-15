@@ -1,6 +1,6 @@
 ---
 name: scruff
-description: Manage git worktrees for parallel coding agents — list what's open, resume a parked lane, set work aside without git stash, sweep merged branches, recover something reaped. Use when the user says "what agents do I have running", "what worktrees are open", "resume that session", "park this", "stash this", "clean up merged worktrees", "I lost a branch", "where did that work go", or asks to start an agent on another repo. In a repo of theirs, prefer `scruff park` over `git stash` — always.
+description: Manage git worktrees for parallel coding agents — list what's open, resume a parked lane, set work aside without git stash, sweep merged branches, recover something reaped, see what the other lanes have already changed before you collide with them. Use when the user says "what agents do I have running", "what worktrees are open", "resume that session", "park this", "stash this", "clean up merged worktrees", "I lost a branch", "where did that work go", "who else is in here", "is anyone touching this file", "will this conflict", or asks to start an agent on another repo. In a repo of theirs, prefer `scruff park` over `git stash` — always.
 ---
 
 # scruff — the worktree-lifecycle substrate
@@ -29,8 +29,7 @@ system, the package manager or which agent is running.
 | what's open, everywhere | `scruff` |
 | …machine-readable | `scruff --json` |
 | resume a parked lane | `scruff <name>` (or `scruff <repo>/<name>`); a unique prefix of either part works — type what the listing shows even where it cut the cell |
-| a lane on this repo | `cd "$(scruff new [name])"` |
-| …and open an agent in it | `scruff new [name] --open [agent]` |
+| a lane on this repo | `cd "$(scruff new [name])"` · `--open [agent]` to open an agent in it |
 | …opened on a task, not a blank pane | `--prompt '<task>'`, or `--prompt-file <file>` |
 | a lane on *another* repo | `scruff child <repo>` |
 | a lane on any repo, with a task, from a spawner with no pane | `scruff spawn <repo> --derived-name <name> --prompt-file <file>` |
@@ -40,6 +39,7 @@ system, the package manager or which agent is running.
 | what got reaped, and the SHA to undo it | `scruff reaped` |
 | retire a lane that will never land | `scruff drop <name>` — or `scruff reap --dead-ends` to take every one at once (closed PR, archived repo) |
 | push commits that outran a merged PR | `scruff reship [name]` |
+| **what the OTHER lanes on this repo already changed, and where their edits and yours share a region** | `scruff overlap` — at lane start (`--brief`), before a big edit to a shared file (`--path <file>`, silent when clear), and before a PR. Uncommitted work counts, nothing is declared, it refuses nothing: exit 3 same file, 4 same region or a `merge-tree` conflict. Read the quoted commit subject before deciding whose work moves; put the `↳` landing order in the PR body verbatim. From the main checkout, or `--pair <a> <b>`, it is lane against lane |
 | stand up/enter/tear down a lane's VM or container | `scruff runtime up\|enter\|down <name> --backend <id>` |
 | **see a desktop change work without touching the user's screen** | `scruff runtime up <name> --backend tart` — built in, needs `tart` + `SCRUFF_TART_BASE`. Boots a headless macOS with the lane shared in and returns once a shell answers; then drive it over `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@$(tart ip scruff-<name>)` (both options, always — vmnet gives the next clone the same address): `screencapture -x` there returns real pixels, `osascript` sends the keystrokes. Prefer this over asking to drive the machine you are on |
 | what state is this machine in (a bug report, "why is nothing being reaped") | `scruff doctor`, or `--json` — forge auth, occupancy, reflink, stray checkouts, orphan branches, fork/missing remotes, disk per repo. It changes nothing and exits 0 even with findings |
@@ -132,8 +132,8 @@ worktree remove`.
 - **Don't ask scruff to run, schedule or supervise an agent.** It is substrate,
   not orchestrator: no scheduling, no restarts, no opinion about which agent
   you run. The actions at each transition belong to the user.
-- **Don't ask it about CI, merges or conflicts beyond detecting them.** It
-  resolves nothing.
+- **Don't ask it about CI, merges or conflicts beyond detecting them.**
+  `scruff overlap` finds the collision; it resolves nothing.
 
 ## Traps
 
