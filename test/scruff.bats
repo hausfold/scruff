@@ -263,6 +263,23 @@ mkwt() { # mkwt <main> <name> — echo the checkout path
 # obvious `grep -c . "$REG" || echo 0` emits "0\n0" and every -eq blows up.
 reg_rows() { awk 'NF' "$REG" 2>/dev/null | wc -l | tr -d ' '; }
 
+# A conversation, keyed the way Claude Code keys one: a directory named for the
+# EXACT cwd ('/' and '.' both becoming '-'), holding a .jsonl whose opening
+# records are session metadata carrying no cwd at all. Every test that asserts
+# `--continue` needs one, because a resume into a directory with no transcript
+# is not a resume — it is an exit 1 (#129).
+mkchat() { # mkchat <cwd> [branch] — echo the transcript directory
+  local dir; dir="$(chatdir "$1")"
+  mkdir -p "$dir"
+  { printf '{"type":"mode","sessionId":"s1"}\n'
+    printf '{"type":"user","sessionId":"s1","cwd":"%s","gitBranch":"%s"}\n' \
+      "$1" "${2:-worktree-$(basename "$1")}"
+  } >"$dir/s1.jsonl"
+  printf '%s' "$dir"
+}
+
+chatdir() { printf '%s' "$HOME/.claude/projects/$(printf '%s' "$1" | sed 's/[/.]/-/g')"; }
+
 fail() { printf '%s\n' "$*" >&2; return 1; }   # not a bats builtin
 
 # ── create (WorktreeCreate hook) ─────────────────────────────────────────────
@@ -578,6 +595,7 @@ PYEOF
 
 @test "resume: rebuilds a parked checkout at its registered path" {
   local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" back)"
+  mkchat "$dir" >/dev/null
   git -C "$main" worktree remove --force "$dir"
   [ ! -e "$dir" ]
   wt_run resume back
@@ -589,6 +607,7 @@ PYEOF
 
 @test "resume: a lane's own chat is CONTINUED, never offered as a picker" {
   local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" solo)"
+  mkchat "$dir" >/dev/null
   git -C "$main" worktree remove --force "$dir"
   wt_run resume solo
   [ "$status" -eq 0 ]
@@ -596,6 +615,54 @@ PYEOF
   # with a single answer, and scruff is the one holding it.
   [[ "$output" == *"claude --continue"* ]]
   [[ "$output" != *"--resume"* ]] || fail "the picker came back: $output"
+}
+
+# A lane's checkout moves without anybody recording it: a lost registry row is
+# rediscovered as an orphan branch, and the path discover synthesises for it is
+# TODAY's bucket convention — which has been three things. Claude keys history
+# on the exact cwd, so the rebuilt lane opened an empty session and exited 1
+# with a thousand messages intact one directory away (#129).
+@test "resume: a lane whose checkout moved brings its conversation with it" {
+  local main dir old; main="$(mkrepo alpha)"; dir="$(mkwt "$main" gallery)"
+  old="$CLAUDE_WT_BASE/workshop/gallery"      # the bucket scruff used to use
+  mkchat "$old" worktree-gallery >/dev/null
+  git -C "$main" worktree remove --force "$dir"
+
+  wt_run resume gallery
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"brought its conversation over from $old"* ]] || fail "$output"
+  [ -f "$(chatdir "$dir")/s1.jsonl" ] || fail "the transcript never arrived"
+  # A COPY: the match is evidence, not proof, so a wrong guess must cost a
+  # `rm -rf` and never a conversation.
+  [ -f "$(chatdir "$old")/s1.jsonl" ] || fail "the original was moved, not copied"
+  # And with a conversation here, continuing it is an answerable question again.
+  [[ "$output" == *"claude --continue"* ]] || fail "$output"
+}
+
+@test "resume: another lane's conversation is never adopted, however alike the name" {
+  # `scruff child` gives a child lane its parent's name on purpose, so one name
+  # in two buckets is an ordinary machine — and the other one is LIVE.
+  local a b mine theirs; a="$(mkrepo alpha)"; b="$(mkrepo beta)"
+  mine="$(mkwt "$a" twin)"; theirs="$(mkwt "$b" twin)"
+  mkchat "$theirs" worktree-twin >/dev/null
+  git -C "$a" worktree remove --force "$mine"
+
+  wt_run resume alpha/twin
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"brought its conversation"* ]] || fail "it took a live lane's chat: $output"
+  [ ! -e "$(chatdir "$mine")" ] || fail "a conversation was copied into the lane"
+  [ -f "$(chatdir "$theirs")/s1.jsonl" ] || fail "the other lane's transcript was disturbed"
+}
+
+@test "resume: a lane with nothing to continue opens a fresh session, not one that exits" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" quiet)"
+  git -C "$main" worktree remove --force "$dir"
+  wt_run resume quiet
+  [ "$status" -eq 0 ]
+  # `claude --continue` in a directory with no transcript is not a resume: it is
+  # "No conversation found to continue" and exit 1, into a pane that closes.
+  [[ "$output" != *"--continue"* ]] || fail "it would have exited 1: $output"
+  [[ "$output" == *"cd $dir && claude"* ]] || fail "$output"
 }
 
 @test "resume: --pick asks for the picker anyway, either side of the name" {
@@ -689,6 +756,7 @@ focus = \"$hook\""
 
 @test "focus: a hook that defers falls back to resume — a lane with no window still opens one" {
   local main dir hook; main="$(mkrepo alpha)"; dir="$(mkwt "$main" detached)"
+  mkchat "$dir" >/dev/null
   git -C "$main" worktree remove --force "$dir"
   hook="$(mkhook focus 'exit 3')"
   setcfg "[hooks]
@@ -701,6 +769,7 @@ focus = \"$hook\""
 
 @test "focus: with no hook at all it is resume — scruff's own answer to go-to-this-lane" {
   local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" plain)"
+  mkchat "$dir" >/dev/null
   git -C "$main" worktree remove --force "$dir"
   wt_run focus plain
   [ "$status" -eq 0 ]
@@ -2093,6 +2162,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
 @test "resume: pre-client registry rows remain Claude worktrees" {
   local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/acme-alpha/legacy"
   git -C "$main" branch worktree-legacy
+  mkchat "$dir" worktree-legacy >/dev/null
   mkdir -p "$(dirname "$REG")"
   printf 'legacy\t%s\tworktree-legacy\t%s\t%s\n' "$main" "$dir" "$main" >"$REG"
   HAUS_AGENT_DEFAULT=codex run "$WT" resume legacy
@@ -2103,6 +2173,7 @@ mkremote() { # mkremote <main> — give a repo a bare origin it can actually pus
 @test "resume: a row naming a retired client reopens in Claude" {
   local main dir; main="$(mkrepo alpha)"; dir="$CLAUDE_WT_BASE/acme-alpha/retired"
   git -C "$main" branch worktree-retired
+  mkchat "$dir" worktree-retired >/dev/null
   mkdir -p "$(dirname "$REG")"
   printf 'retired\t%s\tworktree-retired\t%s\t%s\tjcode\n' "$main" "$dir" "$main" >"$REG"
   HAUS_AGENT_DEFAULT=codex run "$WT" resume retired
@@ -2859,6 +2930,7 @@ preserve = \"$hook\""
 
 @test "hooks: resume — the hook reopens the session instead of scruff exec'ing a client" {
   local main dir hook; main="$(mkrepo alpha)"; dir="$(mkwt "$main" paned)"
+  mkchat "$dir" >/dev/null
   hook="$(mkhook resume '
     printf "%s %s %s\n" "$SCRUFF_NAME" "$SCRUFF_PATH" "$SCRUFF_LANE_AGENT" >"'"$TMP"'/opened"
     printf "%s\n" "$SCRUFF_COMMAND" >"'"$TMP"'/cmd"
@@ -3522,6 +3594,35 @@ teardown() {
   [ "$output" = 0 ] || fail "a remedy line pointed at raw git"
 }
 
+@test "doctor: names a lane whose conversation was left at its old path, and moves neither" {
+  local main dir old; main="$(mkrepo alpha)"; dir="$(mkwt "$main" gallery)"
+  old="$CLAUDE_WT_BASE/workshop/gallery"
+  mkchat "$old" worktree-gallery >/dev/null
+
+  cd "$TMP"; wt_run doctor
+  [ "$status" -eq 0 ] || fail "findings are not failures: $status / $output"
+  [[ "$output" == *"orphan chat"* ]] || fail "the stranded conversation wasn't named: $output"
+  [[ "$output" == *"$old"* ]] || fail "the old path wasn't named: $output"
+  [[ "$output" == *"scruff gallery"* ]] || fail "no remedy: $output"
+  # Read-only, both directions: it neither moves the transcript nor copies it.
+  [ -f "$(chatdir "$old")/s1.jsonl" ] || fail "doctor moved the transcript"
+  [ ! -e "$(chatdir "$dir")" ] || fail "doctor copied the transcript"
+}
+
+@test "doctor --json: a stranded conversation is data, and a healthy lane has none" {
+  local main dir old; main="$(mkrepo alpha)"; dir="$(mkwt "$main" gallery)"
+  cd "$TMP"; wt_run doctor --json
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'"orphan-chat"'* ]] || fail "a lane that never spoke is not stranded: $output"
+
+  old="$CLAUDE_WT_BASE/workshop/gallery"
+  mkchat "$old" worktree-gallery >/dev/null
+  wt_run doctor --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"kind": "orphan-chat"'* ]] || fail "$output"
+  [[ "$output" == *"$old"* ]] || fail "$output"
+}
+
 @test "doctor --json: the envelope header, no 'lanes' key, and false is not null" {
   local main; main="$(mkrepo alpha)"; mkwt "$main" sparkle >/dev/null
   export FAKE_GH_UNAUTH=1
@@ -3747,6 +3848,25 @@ teardown() {
   wt_run doctor --migrate-base
   [ "$status" -eq 0 ]
   [[ "$output" == *"nothing to move"* ]] || fail "$output"
+}
+
+@test "doctor --migrate-base: the conversations move with the checkouts" {
+  unset CLAUDE_WT_BASE
+  local main dir; main="$(mkrepo alpha)"
+  mkdir -p "$HOME/.cache/claude-worktrees"
+  : >"$HOME/.cache/claude-worktrees/registry.tsv"
+  export REG="$HOME/.cache/claude-worktrees/registry.tsv"
+  dir="$(mkwt "$main" sparkle)"
+  mkchat "$dir" worktree-sparkle >/dev/null
+
+  cd "$TMP"; wt_run doctor --migrate-base
+  [ "$status" -eq 0 ] || fail "the move failed: $output"
+  # This is the one mover that KNOWS which path became which, so it carries the
+  # transcript rather than leaving it to be found later (#129).
+  [ -f "$(chatdir "$HOME/.cache/scruff/acme-alpha/sparkle")/s1.jsonl" ] \
+    || fail "the conversation stayed behind: $output"
+  [ ! -e "$(chatdir "$dir")" ] || fail "it was copied, not moved — that duplicates real disk"
+  [[ "$output" == *"conversation(s) moved with them"* ]] || fail "$output"
 }
 
 @test "doctor --migrate-base: a lane whose link git can't repair degrades with exit 3, work intact" {
