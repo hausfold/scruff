@@ -4372,3 +4372,583 @@ twinrepos() { # twinrepos — two `api` checkouts that are not the same repo at 
   wt_run resume nowhere/orphaned
   [ "$status" -eq 0 ] || fail "the basename no longer resolves it: $output"
 }
+
+# ── overlap: what the other lanes have changed, measured ─────────────────────
+#
+# The design claim these protect: nothing is declared anywhere. Every fact comes
+# out of the shared object store, so the tests are all "put real trees on disk
+# and ask", never "write a fixture ledger and trust it". Ported from the
+# workshop's `bench overlap` suite, which is where every squash-merge shape below
+# was first seen in production.
+
+setline() { # setline <file> <n> <text> — portable in-place line edit (no sed -i:
+            # BSD wants an argument, GNU refuses one, and CI is the other OS).
+  awk -v n="$2" -v t="$3" 'NR == n { print t; next } { print }' "$1" >"$1.tmp"
+  mv "$1.tmp" "$1"
+}
+
+# A repo with three lanes, all cut from one base that holds a 60-line doc.md:
+#   snug   UNCOMMITTED edit at line 12 — the half merge-tree cannot see
+#   far    committed edit at line 50: same file, 38 lines away
+#   rival  committed edit at line 10, two lines from snug
+mkoverlap() {
+  OV="$(mkrepo ov)"
+  seq 1 60 >"$OV/doc.md"
+  echo untouched >"$OV/other.md"
+  git -C "$OV" add -A
+  git -C "$OV" commit -qm base
+  SNUG="$(hook_create "$OV" snug)"
+  FAR="$(hook_create "$OV" far)"
+  RIVAL="$(hook_create "$OV" rival)"
+  [ -d "$SNUG" ] && [ -d "$FAR" ] && [ -d "$RIVAL" ] || { printf 'mkoverlap: a lane has no checkout\n' >&2; return 1; }
+  setline "$SNUG/doc.md" 12 12-snug
+  setline "$FAR/doc.md" 50 50-far
+  git -C "$FAR" commit -qam "far: the bottom of doc"
+  setline "$RIVAL/doc.md" 10 10-rival
+  git -C "$RIVAL" commit -qam "rival: the top of doc"
+}
+
+# rawlane <name> [start-point] — a lane made with git alone, under the bucket
+# but with no registry row: the orphan-branch pass of discover has to find it.
+rawlane() {
+  local dir="$CLAUDE_WT_BASE/acme-ov/$1"
+  git -C "$OV" worktree add -q -b "worktree-$1" "$dir" "${2:-main}"
+  printf '%s' "$dir"
+}
+
+# droplane <name> <path> — take a fixture lane out of the picture entirely, so
+# a test about one pair is not answered by a third lane's real finding.
+droplane() {
+  git -C "$OV" worktree remove --force "$2"
+  git -C "$OV" branch -qD "worktree-$1"
+}
+
+# squash_rival — rival's line-10 edit lands on main as a SQUASH: the same
+# content, a new commit, rival's own commit not an ancestor of it.
+squash_rival() {
+  setline "$OV/doc.md" 10 10-rival
+  git -C "$OV" commit -qam "squash: rival's line 10, as a new commit"
+}
+
+@test "overlap sees a sibling's UNCOMMITTED edit, which merge-tree cannot" {
+  # This is the whole reason the hunk index exists beside merge-tree: a lane
+  # spends most of its life with its work still in the working tree.
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"snug"* ]]
+  [[ "$output" == *"doc.md"* ]]
+  [[ "$output" == *"L10-12"* ]]
+}
+
+@test "overlap puts the report on stdout and the narration on stderr" {
+  # SPEC.md §2.3: the table is what the command was run for, so `scruff overlap
+  # | less` carries it whole and a hook can read it; the summary is the tool
+  # talking, and stays on fd 2.
+  mkoverlap
+  cd "$RIVAL"
+  run --separate-stderr "$WT" overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"doc.md"* ]] || fail "the table is not on stdout: $output"
+  [[ "$output" == *"lands first"* ]] || fail "the landing order is not on stdout: $output"
+  [[ "$stderr" == *"overlap — 2 other lane(s) on ov; 1 in your way, 1 nearby"* ]] || fail "no summary on stderr: $stderr"
+  [[ "$output" != *"overlap —"* ]] || fail "the summary leaked onto stdout"
+}
+
+@test "overlap is quiet about a lane at the other end of the same file" {
+  mkoverlap
+  cd "$FAR"
+  wt_run overlap
+  [ "$status" -eq 3 ]                       # same file, different regions
+  [[ "$output" == *"elsewhere in the file"* ]]
+  [[ "$output" != *"⚠"* ]]
+}
+
+@test "overlap reports a lane with no commits as uncommitted, not as the base" {
+  # `git log -1 <branch>` on a commitless lane answers with the shared
+  # ancestor, which would quote the repo's own history back as the
+  # neighbour's plan.
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap
+  [[ "$output" == *"uncommitted work only"* ]]
+  [[ "$output" != *"“base”"* ]]
+}
+
+@test "overlap treats two lanes creating the same new file as a collision" {
+  mkoverlap
+  echo hello >"$SNUG/brand-new.md"
+  echo goodbye >"$FAR/brand-new.md"
+  cd "$FAR"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"brand-new.md"* ]]
+  [[ "$output" == *"the whole file"* ]]
+}
+
+@test "overlap --path answers with silence when that file is clear" {
+  # The hook-shaped form. Anything that prints on a clear file gets muted.
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "overlap --path takes an absolute path, or one relative to where you stand" {
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap --path "$RIVAL/doc.md"
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"snug"* ]]
+  mkdir -p "$RIVAL/sub"
+  cd "$RIVAL/sub"
+  wt_run overlap --path ../doc.md
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"snug"* ]]
+}
+
+@test "overlap says so plainly when this repo has no other lanes" {
+  local main; main="$(mkrepo alone)"
+  local only; only="$(hook_create "$main" solo)"
+  cd "$only"
+  wt_run overlap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no other lanes"* ]]
+}
+
+@test "overlap ignores a registry row whose branch is gone — a corpse, not a lane" {
+  mkoverlap
+  git -C "$OV" worktree remove --force "$SNUG"
+  git -C "$OV" branch -qD worktree-snug
+  cd "$RIVAL"
+  wt_run overlap
+  [ "$status" -eq 3 ]                       # far is still there, quietly
+  [[ "$output" != *"snug"* ]]
+  [[ "$output" == *"1 other lane"* ]]
+}
+
+@test "overlap from the MAIN checkout reports lane against lane instead" {
+  mkoverlap
+  cd "$OV"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"↔"* ]]
+  [[ "$output" == *"snug"* ]]
+  [[ "$output" == *"rival"* ]]
+}
+
+@test "overlap stays quiet about a lane whose work was SQUASH-merged into main" {
+  # A squash merge lands the lane's work as a brand-new commit and leaves the
+  # lane's OWN commits unreachable from main — so `merge-base` keeps answering
+  # with the pre-merge commit for as long as the branch exists, and the reader,
+  # whose history contains the squash, measures that landed commit as its own
+  # work. Both sides then hold the same diff and "collide" over it, with an
+  # intent line quoting the merged commit and a landing order for a branch with
+  # nothing left to land — and it never ages out.
+  mkoverlap
+  squash_rival
+  # The reader is cut from main AFTER the merge — the ordinary case, and the
+  # one that makes both sides carry the landed diff.
+  local after; after="$(hook_create "$OV" after)"
+  setline "$after/other.md" 1 mine
+  cd "$after"
+  wt_run overlap
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"doc.md"* ]]
+  [[ "$output" != *"lands first"* ]]
+}
+
+@test "overlap still sees a merged lane's UNMERGED commits" {
+  # The other half of the same seam: subtracting what main landed must not
+  # subtract what the lane kept doing afterwards — exactly the state `scruff
+  # reship` exists for, commits made after the PR merged.
+  mkoverlap
+  squash_rival
+  # Line 13, not 11: three lines clear of the squashed hunk so it forms its
+  # own, and still inside the fuzz around snug's line 12. Adjacent to the
+  # landed hunk it would COALESCE into one range, and the test would then pass
+  # on the coincidence that the merged range no longer matched.
+  setline "$RIVAL/doc.md" 13 13-rival-after
+  git -C "$RIVAL" commit -qam "rival: kept going after the merge"
+  cd "$SNUG"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"rival"* ]]
+}
+
+@test "overlap stays quiet about a squash-merged lane whose file you took over" {
+  # The landed subtraction's blind spot, and the ordinary shape of a follow-up
+  # lane: cut from a lane that just shipped, carrying on in the file it landed.
+  # Taking main's work out of the READER cannot reach this — the reader's own
+  # edit coalesces with the landed hunk into one range whose boundaries no
+  # longer match main's — and the merged lane, never having rebased, goes on
+  # claiming every line it landed for as long as its branch exists. Content,
+  # not ancestry, is what drops it.
+  mkoverlap
+  droplane snug "$SNUG"; droplane far "$FAR"   # rival and the follow-up, alone
+  squash_rival
+  local follow; follow="$(hook_create "$OV" follow)"
+  # Line 11, ADJACENT to the landed hunk on purpose: that is what coalesces the
+  # two into one range and defeats the exact-range subtraction, which is what
+  # makes the symptom the LOUD one — a ⚠ and a landing order against a branch
+  # with nothing left to land. Three lines clear and the same bug is still
+  # here, quieter: a `·` on doc.md and exit 3.
+  setline "$follow/doc.md" 11 11-follow
+  cd "$follow"
+  wt_run overlap
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"doc.md"* ]]
+  [[ "$output" != *"lands first"* ]]
+  [[ "$output" == *"no other lanes"* ]]     # a branch with nothing to land is not one
+}
+
+@test "overlap sees the squash on origin/main, not just the local main" {
+  # The production shape: the squash lands on the REMOTE ref when a sibling
+  # merges its PR, and the local main doesn't hear about it until someone
+  # pulls. A content check that only consulted the local main would go on
+  # warning about a lane that shipped for as long as this checkout stayed
+  # behind — which is most of the time, since nothing pulls on your behalf.
+  mkoverlap
+  droplane snug "$SNUG"; droplane far "$FAR"
+  local tmp; tmp="$(rawlane tmporigin)"
+  setline "$tmp/doc.md" 10 10-rival                     # rival's edit, to the character
+  git -C "$tmp" commit -qam "squash: rival's line 10, as a new commit"
+  git -C "$OV" update-ref refs/remotes/origin/main worktree-tmporigin
+  git -C "$OV" worktree remove --force "$tmp"
+  git -C "$OV" branch -qD worktree-tmporigin
+  # The follow-up lane is cut from origin/main — local main is still at the base.
+  local follow; follow="$(rawlane follow origin/main)"
+  setline "$follow/doc.md" 11 11-follow
+  cd "$follow"
+  wt_run overlap
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"lands first"* ]]
+  [[ "$output" == *"no other lanes"* ]]
+}
+
+@test "overlap keeps a squash-merged lane that kept committing" {
+  # `scruff reship`'s live+N, and the reason the check is content and not the
+  # forge: a MERGED PR is on its own no reason to drop a lane. The commits made
+  # after it have no remote and no PR, and they collide like any others.
+  mkoverlap
+  squash_rival
+  setline "$RIVAL/doc.md" 11 11-rival-after
+  git -C "$RIVAL" commit -qam "rival: kept going after the merge"
+  local follow; follow="$(hook_create "$OV" follow)"
+  setline "$follow/doc.md" 11 11-follow
+  cd "$follow"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"rival"* ]]
+  [[ "$output" == *"doc.md"* ]]
+}
+
+@test "overlap keeps a landed lane that is still holding uncommitted work" {
+  # merge-tree is committed work only, and the half it cannot see is the half a
+  # lane spends most of its life in. A branch whose every commit landed but
+  # whose checkout is dirty is a live lane, so the content check asks git
+  # status before it calls one spent.
+  mkoverlap
+  squash_rival
+  setline "$RIVAL/doc.md" 11 11-rival-uncommitted   # never committed
+  local follow; follow="$(hook_create "$OV" follow)"
+  setline "$follow/doc.md" 11 11-follow
+  cd "$follow"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"rival"* ]]
+}
+
+@test "overlap from the MAIN checkout leaves a landed lane out of the pairs" {
+  # The matrix counts the lanes it is about to pair, so a landed one has to go
+  # before the count, not after the findings — "3 lanes, no two of them in the
+  # same file" would be promising lanes that aren't there.
+  mkoverlap
+  squash_rival
+  cd "$OV"
+  wt_run overlap
+  [ "$status" -eq 3 ]                       # snug ↔ far, 38 lines apart
+  [[ "$output" == *"2 lanes"* ]]
+  [[ "$output" != *"rival"* ]]
+}
+
+@test "overlap counts a lane that has not started yet, landed or not" {
+  # Spent is for work that LANDED, not for work that never happened. A branch
+  # with no commits of its own merges into main without moving its tree — the
+  # very answer a squash-merged branch gives — so the content check has to ask
+  # whether there was ever anything here first. A just-spawned neighbour is
+  # exactly the one worth knowing about before you plan.
+  mkoverlap
+  hook_create "$OV" fresh >/dev/null
+  cd "$RIVAL"
+  wt_run overlap --brief
+  [ "$status" -eq 4 ]                       # snug is still two lines away
+  [[ "$output" == *"3 other lane"* ]]
+  [[ "$output" == *"fresh"* ]]
+  [[ "$output" == *"nothing shared"* ]]
+}
+
+@test "overlap does not subtract a lane's own edit that main happens to match" {
+  # Per-side, never global: an unrebased lane did not inherit main's commit, so
+  # none of main's work is in its diff to take out — and a global subtraction
+  # would delete this edit, because an independent change to the same line
+  # produces the very same base-side range.
+  mkoverlap
+  setline "$OV/doc.md" 10 10-from-main
+  git -C "$OV" commit -qam "main: line 10, independently"
+  cd "$SNUG"                                # snug edits line 12, rival line 10
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"rival"* ]]
+}
+
+@test "overlap still calls two lanes creating one new file a collision" {
+  # A whole-file add claims the whole range on every side by construction, so
+  # a global subtraction would cancel this out exactly — and add/add is the
+  # case the index would otherwise be blindest to.
+  mkoverlap
+  echo from-main >"$OV/new.md"
+  git -C "$OV" add new.md
+  git -C "$OV" commit -qm "main: adds new.md"
+  echo from-rival >"$RIVAL/new.md"
+  git -C "$RIVAL" add new.md
+  git -C "$RIVAL" commit -qm "rival: adds it too"
+  echo from-snug >"$SNUG/new.md"
+  cd "$SNUG"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  # The FINDING row, not a bare filename: the intent line quotes the lane's
+  # commit subject, so `*"new.md"*` alone is satisfied by the subject even when
+  # the row it is supposed to assert has been subtracted away.
+  [[ "$output" == *"new.md the whole file"* ]]
+}
+
+@test "overlap reaches the merge-tree verdict even when the index is quiet" {
+  # The two signals are reported apart precisely so they can disagree.
+  # Subtracting landed ranges is what makes the index empty while merge-tree
+  # still conflicts: the reader carries main's change to a line an unrebased
+  # lane also edited, so the reader authored nothing, and the lane will still
+  # conflict with main. The failure mode was not a missed row but a printed
+  # "merge-tree: clean".
+  mkoverlap
+  setline "$OV/doc.md" 10 10-from-main      # main lands line 10; rival has its own
+  git -C "$OV" commit -qam "main: line 10, landed"
+  local after; after="$(hook_create "$OV" after)"
+  cd "$after"                               # cut from main, nothing of its own
+  wt_run overlap
+  [[ "$output" == *"none in your files"* ]] # index quiet, correctly
+  [[ "$output" == *"merge-tree already conflicts"* ]]
+  [[ "$output" != *"merge-tree: clean"* ]]
+  [ "$status" -eq 4 ]
+}
+
+@test "overlap is unchanged when the merge base IS main's tip" {
+  # The no-op property the landed subtraction leans on: cut from the current
+  # main, nothing sits between base and tip, the landed set is empty, and
+  # every finding is the one this tool reported before the block existed.
+  mkoverlap
+  cd "$SNUG"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"rival"* ]]
+  [[ "$output" == *"doc.md"* ]]
+}
+
+@test "overlap refuses an argument it doesn't know rather than guessing" {
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap --wat
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown flag"* ]]
+  wt_run overlap doc.md
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--path"* ]]             # the flag the word was probably meant for
+  wt_run overlap --path
+  [ "$status" -eq 1 ]
+}
+
+@test "overlap --help prints the verb's lines and measures nothing" {
+  mkoverlap
+  cd "$RIVAL"
+  run --separate-stderr "$WT" overlap --help
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scruff overlap"* ]]
+  [[ "$stderr" == *"--pair"* ]]
+  [ -z "$output" ]
+}
+
+@test "overlap measures against origin/main, not the local main behind it" {
+  # A sibling landing its PR moves the REMOTE ref; the local main doesn't hear
+  # about it until someone pulls. Reading local main would blind the check to
+  # the one event it exists to catch.
+  mkoverlap
+  local tmp; tmp="$(rawlane tmporigin)"
+  setline "$tmp/doc.md" 10 10-landed-elsewhere
+  git -C "$tmp" commit -qam "a sibling PR that already merged"
+  git -C "$OV" update-ref refs/remotes/origin/main worktree-tmporigin
+  git -C "$OV" worktree remove --force "$tmp"
+  git -C "$OV" branch -qD worktree-tmporigin
+  cd "$RIVAL"                               # rival edits line 10 too
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"origin/main"* ]]
+  [[ "$output" == *"merge-tree already conflicts"* ]]
+}
+
+@test "overlap --path is silent from the main checkout too" {
+  mkoverlap
+  cd "$OV"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "overlap --path from the main checkout still names a real collision" {
+  mkoverlap
+  cd "$OV"
+  wt_run overlap --path doc.md
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"↔"* ]]
+  [[ "$output" != *"overlap —"* ]]          # findings only, no summary
+}
+
+@test "overlap sends the pushed branch first, then the bigger, then the alphabet" {
+  # Both agents must reach the same answer without talking to each other, so
+  # the tiebreak has to be a fact of the repo, not a view from one lane.
+  mkoverlap
+  cd "$SNUG"
+  wt_run overlap
+  [[ "$output" == *"rival lands first (same size — alphabetical"* ]]   # "rival" < "snug"
+  cd "$RIVAL"
+  wt_run overlap
+  [[ "$output" == *"rival lands first (same size — alphabetical"* ]]   # the same from the other side
+  # A second file makes snug the bigger branch.
+  echo more >"$SNUG/other.md"
+  cd "$RIVAL"
+  wt_run overlap
+  [[ "$output" == *"snug lands first (bigger: 2 files vs 1)"* ]]
+  # And a push outranks size.
+  git -C "$OV" update-ref refs/remotes/origin/worktree-rival worktree-rival
+  wt_run overlap
+  [[ "$output" == *"rival lands first (already pushed) — then snug rebases onto main"* ]]
+}
+
+@test "overlap --committed-only reads every lane from its branch alone" {
+  # SPEC.md §7.3: skip the working-tree stat for speed. snug's edit is
+  # uncommitted, so it is invisible here — and the lane counts as one that has
+  # not started, because a branch with no commits of its own has nothing yet.
+  mkoverlap
+  cd "$RIVAL"
+  wt_run overlap --committed-only
+  [ "$status" -eq 3 ]                       # far, committed, 40 lines away
+  [[ "$output" != *"L10-12"* ]]
+  [[ "$output" == *"far"* ]]
+}
+
+@test "overlap --pair compares two named lanes from wherever you stand" {
+  mkoverlap
+  cd "$TMP"                                 # not even inside the repo
+  wt_run overlap --pair snug rival
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"↔"* ]]
+  [[ "$output" == *"L10-12"* ]]
+  wt_run overlap --pair snug far
+  [ "$status" -eq 3 ]
+  wt_run overlap --pair snug nobody
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no lane named"* ]]
+}
+
+@test "overlap --pair refuses two lanes of different repos" {
+  # Two object stores cannot textually collide; the scoping rule needs no flag,
+  # and asking across it is a question with no answer rather than a clean one.
+  mkoverlap
+  local other; other="$(mkrepo elsewhere)"
+  mkwt "$other" abroad >/dev/null
+  wt_run overlap --pair snug abroad
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"different repos"* ]]
+}
+
+@test "overlap --json is the report as data, with the same exit code" {
+  mkoverlap
+  cd "$RIVAL"
+  run --separate-stderr "$WT" overlap --json
+  [ "$status" -eq 4 ]
+  [[ "$output" == *'"schema": 2'* ]]
+  [[ "$output" == *'"mode": "lane"'* ]]
+  [[ "$output" == *'"repo": "acme/ov"'* ]]
+  [[ "$output" == *'"name": "rival"'* ]]    # the reader
+  [[ "$output" == *'"level": "hunk"'* ]]
+  [[ "$output" == *'"from": 10'* ]]
+  [[ "$output" == *'"to": 12'* ]]
+  [[ "$output" == *'"exit": 4'* ]]
+  [[ "$output" == *'"intent": "far: the bottom of doc"'* ]]
+  [[ "$output" == *'"first": "rival"'* ]]
+  [[ "$output" != *"⚠"* ]]                  # data, not a table
+  cd "$OV"
+  run --separate-stderr "$WT" overlap --json
+  [ "$status" -eq 4 ]
+  [[ "$output" == *'"mode": "matrix"'* ]]
+  [[ "$output" == *'"reader": null'* ]]
+}
+
+@test "overlap spells a non-ASCII filename one way on every side" {
+  # `core.quotePath` is on by default, so `ls-files` and `merge-tree` hand back
+  # `"caf\303\251.md"` where the diff — asked with it off — says `café.md`. An
+  # untracked add/add on such a file went unmatched, and the verdict carried
+  # two spellings of one file into a document that is a contract.
+  mkoverlap
+  echo from-rival >"$RIVAL/café.md"
+  git -C "$RIVAL" add café.md
+  git -C "$RIVAL" commit -qm "rival: adds a file with an accent"
+  echo from-snug >"$SNUG/café.md"                   # untracked
+  cd "$SNUG"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"café.md the whole file"* ]]
+  git -C "$SNUG" add café.md
+  git -C "$SNUG" commit -qm "snug: adds it too"
+  run --separate-stderr "$WT" overlap --json
+  [[ "$output" == *'"paths": [
+        "café.md"'* ]] || fail "merge-tree spelled it differently: $output"
+  [[ "$output" != *'\\303'* ]]
+}
+
+@test "overlap --pair --path is anchored on the repo, wherever you stand" {
+  mkoverlap
+  cd "$SNUG"
+  wt_run overlap --pair snug rival --path doc.md
+  [ "$status" -eq 4 ]
+  cd "$TMP"
+  wt_run overlap --pair snug rival --path doc.md   # already repo-relative
+  [ "$status" -eq 4 ]
+  wt_run overlap --pair snug rival --path "$SNUG/doc.md"
+  [ "$status" -eq 4 ]
+  wt_run overlap --pair snug rival --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "overlap --path scopes the merge-tree verdict to that file too" {
+  # Silence on a clear file is the hook shape's whole answer; a conflict in
+  # ANOTHER file is not this file's news, and exit 4 on it would be a wrong
+  # answer rather than a missing one.
+  mkoverlap
+  setline "$FAR/doc.md" 10 10-far-too                 # far and rival now both commit line 10
+  git -C "$FAR" commit -qam "far: the top of doc as well"
+  cd "$RIVAL"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  wt_run overlap --path doc.md
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"merge-tree already conflicts"* ]]
+  [[ "$output" == *"✗"* ]]
+  cd "$OV"
+  wt_run overlap --path other.md
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

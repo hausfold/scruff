@@ -52,6 +52,29 @@ func OK(dir string, args ...string) bool {
 	return err == nil
 }
 
+// Exit runs git and returns its trimmed stdout WITH its exit status, for the
+// questions git answers in a code rather than a yes/no: `merge-tree
+// --write-tree` exits 1 for a conflict and lists the conflicted paths on
+// stdout, which Run would fold into an error. -1 means git could not be run at
+// all. The empty-dir refusal is Run's, for Run's reason.
+func Exit(dir string, args ...string) (string, int) {
+	if dir == "" {
+		return "", -1
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			return "", -1
+		}
+		return strings.TrimSpace(out.String()), ee.ExitCode()
+	}
+	return strings.TrimSpace(out.String()), 0
+}
+
 // Lines splits trimmed output into non-empty lines.
 func Lines(s string) []string {
 	if s == "" {
