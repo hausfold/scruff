@@ -14,7 +14,11 @@ name: release
 #
 # And one thing that is not an artifact but moves on the same number:
 # hausfold/homebrew-tap's `Formula/scruff.rb`, repointed at the new tag's source
-# tarball so `brew install hausfold/tap/scruff` is never a release behind.
+# tarball so `brew install hausfold/tap/scruff` is never a release behind. That
+# one is PROPOSED here, not landed — `bump-tap` pushes it to a branch, and the
+# tap's own gate promotes it to main only if the formula still builds and
+# installs. A green release can therefore end with the tap deliberately still
+# on the previous tag; the tap's `check` run is where that is visible.
 #
 # Cut tags with `bench release scruff <version>` from the workshop; it stamps the
 # version everywhere (script/stamp-version.sh), commits, pushes, tags, and then
@@ -45,7 +49,9 @@ name: release
 #             stored here as the repo secret TAP_DEPLOY_KEY. One keypair per
 #             releasing repo — pounce and perch each have their own, named
 #             "<repo> release workflow (TAP_DEPLOY_KEY)" on the tap — so that
-#             revoking one repo's access never touches the others.
+#             revoking one repo's access never touches the others. This one
+#             writes only a `bump/**` branch, the tap moving its own main — by
+#             convention, not by grant: a deploy key cannot be scoped to a ref.
 #
 #   mirror    a fine-grained PAT with Contents: read+write on
 #             hausfold/scruff-swift, stored here as the repo secret
@@ -366,8 +372,26 @@ jobs:
           git config user.name "haus-release[bot]"
           git config user.email "haus-release@users.noreply.github.com"
           git commit -am "scruff ${VER}"
-          # pounce's and perch's releases push to this same branch, and one of
-          # them landing between our checkout and this push rejects it. Rebase
-          # once and retry, rather than ending a green release with a formula
-          # still on the old tag.
-          git push || { git pull --rebase origin main && git push; }
+
+          # NOT a push to main. `Formula/scruff.rb` compiles, and a deploy-key
+          # push to main IS the formula the moment it lands — no bottle to fall
+          # back to, no revert that helps the user whose `brew install` is
+          # already failing a checksum or a build. So this leaves the rewrite on
+          # a branch; the tap's `check` workflow runs there and its `promote`
+          # job fast-forwards main only on green. A formula that stopped
+          # building leaves users on the previous release, which still installs.
+          #
+          # Nothing downstream waits on that: this job is green once the branch
+          # is pushed, and the tap's run is where the landing succeeds or fails.
+          # `bench release` therefore reports a green release whose tap bump may
+          # still be in flight, which is the intended trade — see the tap's
+          # AGENTS.md, "The gate".
+          #
+          # One branch per tag, force-pushed: it collides only with a re-run of
+          # THIS release, which is exactly when overwriting is right. Because
+          # the ref is per-tag it also never races pounce's and perch's pushes,
+          # which still go straight to main — the rebase-and-retry this used to
+          # need lives in the tap's promote job now, where main is actually
+          # being moved.
+          git push --force origin "HEAD:refs/heads/bump/scruff-$TAG"
+          echo "::notice::Formula/scruff.rb pushed to bump/scruff-$TAG — the tap's check gate promotes it to main on green"
