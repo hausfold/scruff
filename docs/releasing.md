@@ -12,7 +12,7 @@ not an artifact: the Homebrew formula.
 | `sdk/rust` | crates.io `hausfold-scruff` | `cargo publish` over OIDC |
 | `sdk/go` | `github.com/hausfold/scruff/sdk/go` | a `sdk/go/v<version>` tag — Go's proxy needs nothing else |
 | `sdk/swift` | `github.com/hausfold/scruff-swift` | a `<version>` tag on the mirror — SwiftPM likewise |
-| the tap | `hausfold/homebrew-tap`'s `Formula/scruff.rb` | `bump-tap` rewrites its `url` and `sha256` over a deploy key, so `brew install hausfold/tap/scruff` is never a release behind |
+| the tap | `hausfold/homebrew-tap`'s `Formula/scruff.rb` | `bump-tap` rewrites its `url` and `sha256` over a deploy key and pushes them to `bump/scruff-v<X.Y.Z>`; the tap's own gate builds and installs the formula there and promotes it to `main` on green — the one publish here that can end green without having landed |
 
 ## Cutting one
 
@@ -23,6 +23,15 @@ bench release scruff <X.Y.Z>
 That is the whole flow: it stamps the version into every manifest, commits,
 pushes, tags `v<X.Y.Z>`, then blocks — painting the CI job tree live — until
 every publish job finishes, and exits non-zero if one goes red.
+
+**The tap is the one thing it cannot wait for.** `bump-tap` is green once it has
+pushed the branch, and the formula lands a few minutes later from the tap's own
+`check` run. If that run goes red the formula stays on the previous release and
+nothing here says so, by design — a `brew install` that fetches an old tag after
+a green release is a red run at
+[hausfold/homebrew-tap](https://github.com/hausfold/homebrew-tap/actions), and
+the fix is to make it green and re-run its `promote` job, never to hand-push the
+formula.
 
 Never push a `v*` tag by hand. The `version stamp` job in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) re-checks
@@ -70,7 +79,8 @@ repository, which no OIDC token and no `GITHUB_TOKEN` of this repo can ever be
 scoped to. Each carries its own credential, both described in `release.yml`'s
 header: `MIRROR_TOKEN`, a PAT for the Swift mirror and the one credential here
 that can expire, and `TAP_DEPLOY_KEY`, a write deploy key on
-`hausfold/homebrew-tap`. The tap wants **its own keypair for this repo** rather
+`hausfold/homebrew-tap` — which only ever writes a `bump/**` branch there, since
+the tap moves its own `main`. The tap wants **its own keypair for this repo** rather
 than a copy of pounce's or perch's, so that revoking one never touches the
 others: mint one, put the public half on the tap as a read-write deploy key
 titled `scruff release workflow (TAP_DEPLOY_KEY)`, and the private half here as
