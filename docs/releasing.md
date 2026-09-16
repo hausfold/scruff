@@ -27,11 +27,16 @@ every publish job finishes, and exits non-zero if one goes red.
 **The tap is the one thing it cannot wait for.** `bump-tap` is green once it has
 pushed the branch, and the formula lands a few minutes later from the tap's own
 `check` run. If that run goes red the formula stays on the previous release and
-nothing here says so, by design — a `brew install` that fetches an old tag after
-a green release is a red run at
-[hausfold/homebrew-tap](https://github.com/hausfold/homebrew-tap/actions), and
-the fix is to make it green and re-run its `promote` job, never to hand-push the
-formula.
+nothing here says so, by design.
+
+So a `brew install hausfold/tap/scruff` still fetching the old tag after a green
+release is a **red or missing run** at
+[hausfold/homebrew-tap](https://github.com/hausfold/homebrew-tap/actions) —
+missing being the worse of the two, and what a `bump/scruff-v*` branch sitting
+there with no run beside it means. Fix the formula, then **re-run failed jobs**
+on that `check` run: `promote` is `needs: formula`, so a red gate leaves it
+skipped, and a skipped job cannot be re-run on its own. Never hand-push the
+formula to the tap's main.
 
 Never push a `v*` tag by hand. The `version stamp` job in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml) re-checks
@@ -79,8 +84,10 @@ repository, which no OIDC token and no `GITHUB_TOKEN` of this repo can ever be
 scoped to. Each carries its own credential, both described in `release.yml`'s
 header: `MIRROR_TOKEN`, a PAT for the Swift mirror and the one credential here
 that can expire, and `TAP_DEPLOY_KEY`, a write deploy key on
-`hausfold/homebrew-tap` — which only ever writes a `bump/**` branch there, since
-the tap moves its own `main`. The tap wants **its own keypair for this repo** rather
+`hausfold/homebrew-tap` — which by convention only writes a `bump/**` branch
+there, the tap moving its own `main`. Convention is all it is: a deploy key
+cannot be scoped to a ref, so read-write is write to every branch including
+`main`. The tap wants **its own keypair for this repo** rather
 than a copy of pounce's or perch's, so that revoking one never touches the
 others: mint one, put the public half on the tap as a read-write deploy key
 titled `scruff release workflow (TAP_DEPLOY_KEY)`, and the private half here as

@@ -50,7 +50,8 @@ name: release
 #             releasing repo — pounce and perch each have their own, named
 #             "<repo> release workflow (TAP_DEPLOY_KEY)" on the tap — so that
 #             revoking one repo's access never touches the others. This one
-#             only ever writes a `bump/**` branch; the tap moves its own main.
+#             writes only a `bump/**` branch, the tap moving its own main — by
+#             convention, not by grant: a deploy key cannot be scoped to a ref.
 #
 #   mirror    a fine-grained PAT with Contents: read+write on
 #             hausfold/scruff-swift, stored here as the repo secret
