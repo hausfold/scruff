@@ -102,6 +102,11 @@ make build        # ./scruff
   `cargo test`, `swift test`, `go test ./...`) from its directory, as CI's
   `sdks` and `swift-sdk` jobs do.
 - `fmt` is `gofmt -w` and rewrites your tree; CI gates on `gofmt -l`.
+- **The suite runs in parallel — `BATS_JOBS=1 make test` is the way back.**
+  Interleaved output is the only thing parallelism costs, so reach for serial
+  when you are reading a failure and not otherwise: going back costs ~118s on
+  macOS. Why 8, and why not the core count, is in the Makefile beside the
+  measurement that chose it.
 - `test/scruff.bats` is black-box (built binary, shim `gh`/`lsof` on `PATH`);
   `go test ./...` covers rewriting another tool's file (`~/.claude.json`). CI
   runs both on macOS and Linux; one OS is not done.

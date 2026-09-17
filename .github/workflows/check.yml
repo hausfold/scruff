@@ -71,7 +71,13 @@ jobs:
         run: go vet ./...
 
       # The full 0.1 contract. It went green with `reship`, so this is a hard
-      # gate now rather than a score — a PR that breaks any of the 77 fails.
+      # gate now rather than a score — a PR that breaks any of the 327 fails.
+      #
+      # This step IS scruff's gate: ~99% of the macOS job, and the whole of the
+      # distance to the runner-up. It runs in parallel, and the flags live in
+      # the Makefile with the measurement that chose them rather than here, so
+      # that `make test` on a laptop and `make test` on a runner stay the same
+      # command. BATS_JOBS is the knob if this job ever needs its own number.
       - name: acceptance suite
         run: make test
 
