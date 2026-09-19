@@ -106,7 +106,9 @@ make build        # ./scruff
   Interleaved output is the only thing parallelism costs, so reach for serial
   when you are reading a failure and not otherwise: going back costs ~118s on
   macOS. Why 8, and why not the core count, is in the Makefile beside the
-  measurement that chose it.
+  measurement that chose it. **`flake.nix`'s `checkPhase` stays serial on
+  purpose** — inside a derivation `NIX_BUILD_CORES` is the contract and nix is
+  already parallel across derivations, so the flags belong to `make test` alone.
 - `test/scruff.bats` is black-box (built binary, shim `gh`/`lsof` on `PATH`);
   `go test ./...` covers rewriting another tool's file (`~/.claude.json`). CI
   runs both on macOS and Linux; one OS is not done.
