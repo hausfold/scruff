@@ -536,3 +536,21 @@ func TestTheHoldIgnoresEveryOtherEvent(t *testing.T) {
 		}
 	}
 }
+
+// A `done` used to be what took a lane's ask off the ledge, since it carried
+// the same key. Held, it cannot — so the hold does it, or the fin sits there
+// saying "waiting on you" for the length of the wait.
+func TestAHeldStopStillTakesTheLanesAskDown(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("SCRUFF_STATE", "")
+	t.Setenv("SCRUFF_TRILL", filepath.Join(t.TempDir(), "absent")) // no launch
+	key := "scruff/alpha/sparkle"
+	markAskOutstanding(key)
+
+	if !heldForBackgroundWork("Stop", stopWith(task("subagent", "running")), key) {
+		t.Fatal("the Stop must be held")
+	}
+	if anyAskOutstanding() {
+		t.Fatal("the held Stop must take the lane's ask down")
+	}
+}

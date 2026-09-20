@@ -1474,6 +1474,10 @@ event a different amount:
   Read one key at a time and only on an idle ask, so unlike the asks dir it
   needs no cheap-gate of its own.
 
+A held `Stop` still takes the lane's ask off the ledge. A `done` used to do
+that by carrying the same key; held, it cannot, and the fin left behind would
+say "waiting on you" about a session that is waiting on its agents instead.
+
 Only `subagent` and `workflow` tasks hold a banner back. A `shell` is routinely
 a dev server, a `monitor` never exits by definition, a `teammate` can sit idle
 inside a running task — holding on any of those would silence a lane for the

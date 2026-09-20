@@ -369,6 +369,13 @@ func heldForBackgroundWork(event string, payload map[string]any, key string) boo
 			return false
 		}
 		markWaitingOnAgents(key)
+		// A `done` used to be the thing that took this lane's ask off the
+		// ledge — same key, so it replaced it. Held, it no longer can, and the
+		// fin left behind says "waiting on you" about a session that is waiting
+		// on its agents instead. So take it down here: the ledge goes quiet for
+		// the whole wait, which is the point, and the marker gate means a lane
+		// with nothing outstanding pays one failed unlink for it.
+		takeDownAsk(key)
 		return true
 	case "Notification":
 		kind, _ := hookField(payload, "notification_type")
