@@ -21,7 +21,7 @@ This README lives at `sdk/swift` in
 the next sync.
 
 ```swift
-.package(url: "https://github.com/hausfold/scruff-swift", from: "0.1.0")
+.package(url: "https://github.com/hausfold/scruff-swift", from: "1.0.0")
 ```
 
 To work on the SDK itself, reference it as a local package against a
