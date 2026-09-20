@@ -18,7 +18,8 @@ name: release
 # one is PROPOSED here, not landed — `bump-tap` pushes it to a branch, and the
 # tap's own gate promotes it to main only if the formula still builds and
 # installs. A green release can therefore end with the tap deliberately still
-# on the previous tag; the tap's `check` run is where that is visible.
+# on the previous tag; the tap's `check` run is where that is visible, and
+# `bench release scruff` watches it after this one and says live or red.
 #
 # Cut tags with `bench release scruff <version>` from the workshop; it stamps the
 # version everywhere (script/stamp-version.sh), commits, pushes, tags, and then
@@ -381,11 +382,12 @@ jobs:
           # job fast-forwards main only on green. A formula that stopped
           # building leaves users on the previous release, which still installs.
           #
-          # Nothing downstream waits on that: this job is green once the branch
+          # Nothing in THIS run waits on that: this job is green once the branch
           # is pushed, and the tap's run is where the landing succeeds or fails.
-          # `bench release` therefore reports a green release whose tap bump may
-          # still be in flight, which is the intended trade — see the tap's
-          # AGENTS.md, "The gate".
+          # `bench release scruff` watches that run next — after this one goes
+          # green and the lock ripple is done — and ends on live or red on the
+          # same screen. The intended trade is that a red gate holds the
+          # formula, never the release — see the tap's AGENTS.md, "The gate".
           #
           # One branch per tag, force-pushed: it collides only with a re-run of
           # THIS release, which is exactly when overwriting is right. Because
