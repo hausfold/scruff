@@ -165,7 +165,8 @@ func (e *Env) toJSONLane(r listRow, occ occupancy.Report) jsonLane {
 		w.Landed.Verdict = "yes"
 	case v.Via == "merge-tree-empty":
 		// Advisory only: this cannot tell a squash merge from a branch that
-		// never did anything, so `reap` ignores it without --contained.
+		// never did anything, so `reap` never acts on it — a person who knows
+		// the work is upstream takes the lane with `scruff drop`.
 		w.Landed.Verdict = "contained"
 	}
 	return w
