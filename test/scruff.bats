@@ -1126,6 +1126,20 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   [ -d "$asks" ]
 }
 
+@test "reap: a reaped lane drops the hold its agents left behind" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" sweepme)"
+  git -C "$main" merge -q --no-edit worktree-sweepme
+  mktrill
+  local waits="$XDG_STATE_HOME/scruff/waits"
+  mkdir -p "$waits"; : >"$waits/scruff.alpha.sweepme"
+
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  # A hold is keyed by <repo>/<lane>, so a lane made again under that name
+  # inside the hour would inherit it and lose its first idle ask.
+  [ ! -e "$waits/scruff.alpha.sweepme" ]
+}
+
 @test "reap: an ordinary reap launches no trill at all" {
   local main; main="$(mkrepo alpha)"; mkwt "$main" sweepme >/dev/null
   git -C "$main" merge -q --no-edit worktree-sweepme

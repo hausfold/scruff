@@ -1474,20 +1474,23 @@ event a different amount:
   Read one key at a time and only on an idle ask, so unlike the asks dir it
   needs no cheap-gate of its own.
 
-A held `Stop` still takes the lane's ask off the ledge. A `done` used to do
-that by carrying the same key; held, it cannot, and the fin left behind would
-say "waiting on you" about a session that is waiting on its agents instead.
-
 Only `subagent` and `workflow` tasks hold a banner back. A `shell` is routinely
 a dev server, a `monitor` never exits by definition, a `teammate` can sit idle
 inside a running task — holding on any of those would silence a lane for the
-rest of its life. Everything the hook cannot read holds nothing: no task list,
-an unknown `notification_type`, a permission prompt during background work. The
+rest of its life. Both the type and the status are read as ALLOW-lists for that
+reason, and everything the hook cannot read holds nothing: no task list, an
+unknown task type or status, an unknown `notification_type`, a permission
+prompt during background work. A held `Stop` also leaves an outstanding ask
+where it is, because the ask marker carries no content and a background
+worker's own permission prompt is indistinguishable from a stale idle fin. The
 direction of the error is the banner FIRING, always, because one you did not
 need costs a glance and one you did not get costs the feature.
 
-The leak is a session that died mid-flight, whose marker no later `Stop` will
-rewrite, so a marker stops holding after an hour and the sweep drops it. An
+What leaks is a marker no later `Stop` will rewrite: a session that died
+mid-flight, a lane reaped while its agents ran. Reaping clears its own, beside
+the ask it already took down — a wait marker is keyed by `<repo>/<lane>`, so a
+lane made again under that name would otherwise inherit the hold. The rest stop
+holding after an hour, and the sweep drops them. An
 hour is off the measured shape of the wait: of 575 background agents on one
 machine, half were back inside 6 minutes, 99% inside 28, the longest at 85.
 

@@ -86,6 +86,8 @@ A LANE is one agent's branch, checkout and pane, from create to reaped.
   scruff hook notify        [hook] client events → a trill banner for the lane:
                           Notification hangs an ask, Stop replaces it with a
                           done, UserPromptSubmit/PostToolUse resolve it —
+                          the done and the idle ask wait for the session's
+                          background agents, a real question never does —
                           JSON on stdin, exit 0 always, no-op without trill
 
   --json                  machine-readable listing: scruff --json, scruff list --json

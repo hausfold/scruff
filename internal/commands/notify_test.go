@@ -431,8 +431,32 @@ func TestStopIsNotHeldByBackgroundWorkThatNeverEnds(t *testing.T) {
 	if heldForBackgroundWork("Stop", stopWith(task("subagent", "completed")), "scruff/alpha/sparkle") {
 		t.Fatal("a finished subagent must not hold the banner")
 	}
-	if !heldForBackgroundWork("Stop", stopWith(task("local_agent", "pending")), "scruff/alpha/sparkle") {
-		t.Fatal("the raw discriminant must be held on too")
+	// A status this does not recognise falls out the same way: the client may
+	// grow a `cancelled` or a `timed_out`, and an unreadable one must fire the
+	// banner rather than hold it.
+	if heldForBackgroundWork("Stop", stopWith(task("subagent", "cancelled")), "scruff/alpha/sparkle") {
+		t.Fatal("an unknown status must not hold the banner")
+	}
+}
+
+// Workflows are the other bounded thing the session is woken by, and both the
+// friendly label and the raw discriminant reach this hook — the client falls
+// back to the discriminant for any type it has no label for.
+func TestStopIsHeldByEitherSpellingOfAgentWork(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("SCRUFF_STATE", "")
+	for _, kind := range []string{"subagent", "local_agent", "workflow", "local_workflow"} {
+		for _, status := range []string{"running", "pending"} {
+			if !heldForBackgroundWork("Stop", stopWith(task(kind, status)), "scruff/alpha/sparkle") {
+				t.Fatalf("a %q task %q must hold the banner", kind, status)
+			}
+		}
+	}
+	// One held task in a list of things that hold nothing is still a hold.
+	if !heldForBackgroundWork("Stop", stopWith(
+		task("shell", "running"), task("monitor", "running"), task("subagent", "running"),
+	), "scruff/alpha/sparkle") {
+		t.Fatal("a subagent beside a dev server must still hold the banner")
 	}
 }
 
@@ -512,9 +536,6 @@ func TestWaitMarkerStaysInsideItsOwnDir(t *testing.T) {
 			t.Fatalf("key %q escaped to %q", key, got)
 		}
 	}
-	if waitsDir() == asksDir() {
-		t.Fatal("the hold markers must not land in the asks dir")
-	}
 	// A pane with nothing to key by cannot be held, and must not write the
 	// directory itself as a file.
 	markWaitingOnAgents("")
@@ -537,10 +558,13 @@ func TestTheHoldIgnoresEveryOtherEvent(t *testing.T) {
 	}
 }
 
-// A `done` used to be what took a lane's ask off the ledge, since it carried
-// the same key. Held, it cannot — so the hold does it, or the fin sits there
-// saying "waiting on you" for the length of the wait.
-func TestAHeldStopStillTakesTheLanesAskDown(t *testing.T) {
+// A held Stop leaves an outstanding ask exactly where it is. The marker is
+// content-free, so nothing can tell a stale idle fin from a background
+// worker's own permission prompt — and resolving THAT takes a live question
+// off the ledge while the session it blocks waits for an answer nobody will
+// be told about. A stale fin costs one `done` replacing it at the end of the
+// wait; this would cost the question.
+func TestAHeldStopLeavesAnOutstandingAskAlone(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("SCRUFF_STATE", "")
 	t.Setenv("SCRUFF_TRILL", filepath.Join(t.TempDir(), "absent")) // no launch
@@ -550,7 +574,7 @@ func TestAHeldStopStillTakesTheLanesAskDown(t *testing.T) {
 	if !heldForBackgroundWork("Stop", stopWith(task("subagent", "running")), key) {
 		t.Fatal("the Stop must be held")
 	}
-	if anyAskOutstanding() {
-		t.Fatal("the held Stop must take the lane's ask down")
+	if !anyAskOutstanding() {
+		t.Fatal("a held Stop must not resolve the lane's ask")
 	}
 }

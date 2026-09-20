@@ -49,14 +49,16 @@ func (e *Env) HookNotify(stdin io.Reader) error {
 		e.resolveAsk(payload)
 		return nil
 	}
-	// The key first, because the hold below is keyed by lane too — and because
-	// the send path wanted it anyway, one lookup further down.
-	key, _ := e.askKeyFor(payload)
-	if heldForBackgroundWork(event, payload, key) {
-		return nil
-	}
 	args, ok := e.trillSendArgs(payload)
 	if !ok {
+		return nil
+	}
+	// Asked AFTER the args, so an event that was never going to send one pays
+	// nothing for the hold: trillSendArgs declines on its own switch, before it
+	// looks a lane up. A held Stop throws its argv away, which is a string
+	// build and a registry read it was making anyway.
+	key, _ := e.askKeyFor(payload)
+	if heldForBackgroundWork(event, payload, key) {
 		return nil
 	}
 	bin := trillBinary()
@@ -369,13 +371,14 @@ func heldForBackgroundWork(event string, payload map[string]any, key string) boo
 			return false
 		}
 		markWaitingOnAgents(key)
-		// A `done` used to be the thing that took this lane's ask off the
-		// ledge — same key, so it replaced it. Held, it no longer can, and the
-		// fin left behind says "waiting on you" about a session that is waiting
-		// on its agents instead. So take it down here: the ledge goes quiet for
-		// the whole wait, which is the point, and the marker gate means a lane
-		// with nothing outstanding pays one failed unlink for it.
-		takeDownAsk(key)
+		// An outstanding ask is LEFT ALONE, however stale it looks. The marker
+		// is content-free, so nothing here can tell an idle fin from a
+		// background worker's own `worker_permission_prompt` — and resolving
+		// that one takes a live question off the ledge while the session it
+		// blocks waits for an answer nobody will ever be told about. The
+		// direction of the error is the banner staying up: the worst a stale
+		// fin costs is a `done` replacing it at the end of the wait, which is
+		// the same key and happens anyway.
 		return true
 	case "Notification":
 		kind, _ := hookField(payload, "notification_type")
@@ -392,8 +395,10 @@ const idleNotification = "idle_prompt"
 // backgroundAgentsInFlight reads the Stop payload's `background_tasks`.
 //
 // The list is already filtered to work that is running or pending AND
-// backgrounded, so presence is nearly the whole answer; the status check below
-// only discounts an entry the client explicitly says is over.
+// backgrounded, so presence is nearly the whole answer. Both fields are read as
+// allow-lists anyway: a type or a status this does not recognise falls out to
+// the banner firing, which is the only direction this hook is allowed to be
+// wrong in.
 //
 // TYPE is the part that needs judgement, because most of what can be in this
 // list must NOT hold a banner back. `type` is a friendly label ('shell',
@@ -420,7 +425,7 @@ func backgroundAgentsInFlight(payload map[string]any) bool {
 		if !heldTaskTypes[kind] {
 			continue
 		}
-		if status, _ := task["status"].(string); !terminalTaskStatuses[status] {
+		if status, _ := task["status"].(string); liveTaskStatuses[status] {
 			return true
 		}
 	}
@@ -432,9 +437,11 @@ var heldTaskTypes = map[string]bool{
 	"workflow": true, "local_workflow": true,
 }
 
-var terminalTaskStatuses = map[string]bool{
-	"completed": true, "failed": true, "killed": true, "stopped": true,
-}
+// liveTaskStatuses is an allow-list for the same reason heldTaskTypes is one: a
+// status this does not know — a `cancelled` or `timed_out` the client grows
+// later — must fall out to the banner firing, not to a silent hold. These two
+// are what the client's own filter lets through today.
+var liveTaskStatuses = map[string]bool{"running": true, "pending": true}
 
 // ── the waiting-on-agents marker ─────────────────────────────────────────────
 //
@@ -445,9 +452,10 @@ var terminalTaskStatuses = map[string]bool{
 // its own.
 //
 // Every Stop rewrites or removes it, which is what keeps it honest: a hold can
-// only ever describe the most recent turn. The one shape that leaks is a
-// session that died mid-flight, whose marker nothing will ever rewrite, and
-// the age below is the whole answer to it.
+// only ever describe the most recent turn. What leaks is a marker no later Stop
+// will ever rewrite — a session that died mid-flight, a lane reaped while its
+// agents ran. The reap path clears its own (sweep.go), and the age below
+// answers the rest.
 
 func waitsDir() string { return filepath.Join(stateDir(), "waits") }
 
