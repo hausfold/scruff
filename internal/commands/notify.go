@@ -24,6 +24,9 @@ import (
 //	PostToolUse       → a tool actually ran, so a permission prompt was
 //	                    approved: resolve the fin
 //
+// Both banners are held back while the turn only LOOKS over — see the
+// background-work section below.
+//
 // The two resolve events fire constantly (PostToolUse, once per tool call), so
 // the fast path has to be nearly free: with no ask outstanding anywhere this
 // reads one directory and returns, without loading the registry or launching
@@ -46,6 +49,12 @@ func (e *Env) HookNotify(stdin io.Reader) error {
 		e.resolveAsk(payload)
 		return nil
 	}
+	// The key first, because the hold below is keyed by lane too — and because
+	// the send path wanted it anyway, one lookup further down.
+	key, _ := e.askKeyFor(payload)
+	if heldForBackgroundWork(event, payload, key) {
+		return nil
+	}
 	args, ok := e.trillSendArgs(payload)
 	if !ok {
 		return nil
@@ -62,7 +71,6 @@ func (e *Env) HookNotify(stdin io.Reader) error {
 	}
 	// The fin is up (or, for a done, the ask it replaced is gone). Arm — or
 	// disarm — the cheap check the resume events make.
-	key, _ := e.askKeyFor(payload)
 	if key == "" {
 		return nil
 	}
@@ -322,6 +330,159 @@ func takeDownAsk(key string) bool {
 	return true
 }
 
+// ── the background-work hold ─────────────────────────────────────────────────
+//
+// A turn can end with the session still working. Claude Code answers you, keeps
+// its background agents running, and is woken again when they report back — so
+// the `done` at the end of that first answer is a banner that says "finished"
+// about a session you will find still spinning, and the `ask` that follows 60
+// seconds later parks a sticky fin on the ledge for a question nobody asked.
+// Both cost the same thing: you walk over, read a progress list, and walk away
+// again. The banner that matters is the one after the LAST answer, and it
+// arrives on its own, because the agents finishing wakes the session into
+// another turn with another Stop at the end of it.
+//
+// So both are held while background agents are in flight. Which is knowable:
+//
+//   - **Stop** carries `background_tasks`, the client's own list of in-flight
+//     background work, and its schema says in as many words that it is there to
+//     let a hook "distinguish 'session is done' from 'session is paused waiting
+//     for background work'". Live data on every event, so a hold can never
+//     outlast the turn that set it — the next Stop reads the list again.
+//   - **Notification** carries no such list (`message`, `title`,
+//     `notification_type`, and that is all). But the only Notification this is
+//     about is the idle one, which can only follow the Stop that ended the
+//     turn — so the held Stop leaves a marker behind and the idle ask reads it.
+//
+// Nothing else is held. A permission prompt during background work is a real
+// question with a real session blocked behind it, and an unknown
+// `notification_type` is treated as one: the direction of the error here is
+// "the banner fires", every time, because a banner you did not need costs a
+// glance and a banner you did not get costs the whole feature.
+func heldForBackgroundWork(event string, payload map[string]any, key string) bool {
+	switch event {
+	case "Stop":
+		if !backgroundAgentsInFlight(payload) {
+			// The turn is genuinely over. Anything the idle ask might have
+			// read is now a lie.
+			clearWaitingOnAgents(key)
+			return false
+		}
+		markWaitingOnAgents(key)
+		return true
+	case "Notification":
+		kind, _ := hookField(payload, "notification_type")
+		return kind == idleNotification && waitingOnAgents(key)
+	}
+	return false
+}
+
+// idleNotification is the client's name for "you have not typed anything for a
+// while", the Notification that is not a question — `permission_prompt`,
+// `agent_needs_input` and the elicitation types all are, and all still banner.
+const idleNotification = "idle_prompt"
+
+// backgroundAgentsInFlight reads the Stop payload's `background_tasks`.
+//
+// The list is already filtered to work that is running or pending AND
+// backgrounded, so presence is nearly the whole answer; the status check below
+// only discounts an entry the client explicitly says is over.
+//
+// TYPE is the part that needs judgement, because most of what can be in this
+// list must NOT hold a banner back. `type` is a friendly label ('shell',
+// 'subagent', 'monitor', 'workflow'), falling back to the client's raw
+// discriminant for anything it has no label for — so both spellings are
+// matched. Two of them are held on:
+//
+//	subagent / local_agent      an Agent the session is waiting to hear from
+//	workflow / local_workflow   a script of those
+//
+// Both are bounded work that wakes the session when it lands, which is what
+// makes the later banner certain. The rest are not: a `shell` is routinely a
+// dev server that never exits, a `monitor` never exits by definition, and a
+// `teammate` can sit idle inside a running task. Holding on any of those would
+// silence a lane for the rest of its life — the one failure this must not have.
+func backgroundAgentsInFlight(payload map[string]any) bool {
+	tasks, _ := payload["background_tasks"].([]any)
+	for _, entry := range tasks {
+		task, _ := entry.(map[string]any)
+		if task == nil {
+			continue
+		}
+		kind, _ := task["type"].(string)
+		if !heldTaskTypes[kind] {
+			continue
+		}
+		if status, _ := task["status"].(string); !terminalTaskStatuses[status] {
+			return true
+		}
+	}
+	return false
+}
+
+var heldTaskTypes = map[string]bool{
+	"subagent": true, "local_agent": true,
+	"workflow": true, "local_workflow": true,
+}
+
+var terminalTaskStatuses = map[string]bool{
+	"completed": true, "failed": true, "killed": true, "stopped": true,
+}
+
+// ── the waiting-on-agents marker ─────────────────────────────────────────────
+//
+// One empty file per lane whose last turn ended with agents still running,
+// beside the ask markers and with the same naming. It exists because the idle
+// Notification cannot see what the Stop saw (§9.1), and it is read exactly
+// once per idle session — never on the tool-call path, so it needs no gate of
+// its own.
+//
+// Every Stop rewrites or removes it, which is what keeps it honest: a hold can
+// only ever describe the most recent turn. The one shape that leaks is a
+// session that died mid-flight, whose marker nothing will ever rewrite, and
+// the age below is the whole answer to it.
+
+func waitsDir() string { return filepath.Join(stateDir(), "waits") }
+
+func waitMarker(key string) string { return filepath.Join(waitsDir(), flattenKey(key)) }
+
+// waitMarkerMaxAge is how long a marker may stand for "still working".
+//
+// An hour, off the measured shape of the thing it is waiting for: across 575
+// background agents on one machine, half were back inside 6 minutes, 99% inside
+// 28, and the longest ran 85. An hour clears the 99th twice over, and past it a
+// session that has said nothing is worth a banner whatever it is doing — which
+// is also the recovery for the leaked marker, since the cost of being wrong
+// here is one idle ask that does not fire.
+const waitMarkerMaxAge = time.Hour
+
+func markWaitingOnAgents(key string) {
+	if key == "" {
+		return
+	}
+	if err := os.MkdirAll(waitsDir(), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(waitMarker(key), nil, 0o644)
+}
+
+func clearWaitingOnAgents(key string) {
+	if key == "" {
+		return
+	}
+	_ = os.Remove(waitMarker(key))
+}
+
+// waitingOnAgents answers the idle ask: did this lane's last turn end with
+// agents still running, recently enough to still be true?
+func waitingOnAgents(key string) bool {
+	if key == "" {
+		return false
+	}
+	info, err := os.Stat(waitMarker(key))
+	return err == nil && time.Since(info.ModTime()) < waitMarkerMaxAge
+}
+
 // ── the outstanding-ask marker ───────────────────────────────────────────────
 //
 // One empty file per fin this hook put up, under scruff's state dir. It exists
@@ -363,8 +524,13 @@ func asksDir() string { return filepath.Join(stateDir(), "asks") }
 // could in principle collide with another, and the consequence of that is one
 // resolve firing a moment early for a lane that was about to be resolved
 // anyway.
-func askMarker(key string) string {
-	flat := strings.Map(func(r rune) rune {
+func askMarker(key string) string { return filepath.Join(asksDir(), flattenKey(key)) }
+
+// flattenKey is that flattening, shared with the wait markers beside these so
+// one key is one filename in both directories — and so neither can be talked
+// out of its own directory by a key with a separator in it.
+func flattenKey(key string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 			return r
@@ -373,7 +539,6 @@ func askMarker(key string) string {
 		}
 		return '.'
 	}, key)
-	return filepath.Join(asksDir(), flat)
 }
 
 func markAskOutstanding(key string) {
@@ -429,13 +594,20 @@ const askMarkerMaxAge = 24 * time.Hour
 // marker dir that cannot be read is exactly the "no fin is up" answer the gate
 // already gives. Entries are unlinked one by one and the directory itself is
 // never touched — something else on the machine may be watching it.
-func pruneStaleAsks() {
-	dir := asksDir()
+func pruneStaleAsks() { pruneMarkers(asksDir(), askMarkerMaxAge) }
+
+// pruneStaleWaits is the same housekeeping for the hold markers, which leak in
+// only one shape — a session that ended while its agents were still running —
+// and are read one key at a time, so a full directory costs nothing but disk.
+// Swept anyway, because nothing else here is allowed to grow forever.
+func pruneStaleWaits() { pruneMarkers(waitsDir(), waitMarkerMaxAge) }
+
+func pruneMarkers(dir string, maxAge time.Duration) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	cutoff := time.Now().Add(-askMarkerMaxAge)
+	cutoff := time.Now().Add(-maxAge)
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil || info.ModTime().After(cutoff) {

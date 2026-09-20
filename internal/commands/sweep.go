@@ -152,6 +152,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 	// Housekeeping for the same reason pruneRegistry is here: a sweep is the
 	// only thing that runs regularly and is allowed to throw state away.
 	pruneStaleAsks()
+	pruneStaleWaits()
 	return res
 }
 
