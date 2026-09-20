@@ -142,7 +142,13 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 			// to it: it reports whether there WAS a fin, and the ordinary reap
 			// is of a lane that ended its turn cleanly and has nothing on the
 			// ledge. A sweep of forty lanes launches nothing.
-			takeDownAsk(askKey(laneID(entry.Main, entry.Name()), nil))
+			laneKey := askKey(laneID(entry.Main, entry.Name()), nil)
+			takeDownAsk(laneKey)
+			// And its hold, for a reason the asks half does not have: a wait
+			// marker is keyed by <repo>/<lane>, so a lane made again under the
+			// same name inside the hour would inherit it and have its first
+			// idle ask silenced — the exact fin the hold exists to protect.
+			clearWaitingOnAgents(laneKey)
 			res.Reaped = append(res.Reaped, entry.Label())
 		} else {
 			e.noteRelanded(&res, entry)
@@ -152,6 +158,7 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 	// Housekeeping for the same reason pruneRegistry is here: a sweep is the
 	// only thing that runs regularly and is allowed to throw state away.
 	pruneStaleAsks()
+	pruneStaleWaits()
 	return res
 }
 

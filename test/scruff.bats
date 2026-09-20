@@ -946,6 +946,51 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   grep -q -- '--title sparkle' "$FAKE_TRILL_LOG"
 }
 
+
+# ── the background-work hold ─────────────────────────────────────────────────
+# A turn can end with the session still working: Claude Code answers you, keeps
+# its background agents running, and is woken again when they land. The `done`
+# at the end of that first answer is a banner that says "finished" about a
+# session you will find still spinning, and the idle `ask` 60s later parks a
+# sticky fin for a question nobody asked. Both are held; the banner after the
+# LAST answer arrives on its own.
+
+@test "notify: a Stop with a subagent still running sends nothing" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" sparkle)"
+  mktrill
+  run hook_notify "{\"hook_event_name\":\"Stop\",\"cwd\":\"$dir\",\"background_tasks\":[{\"id\":\"t1\",\"type\":\"subagent\",\"status\":\"running\",\"description\":\"assurance pass\"}]}"
+  [ "$status" -eq 0 ]
+  [ ! -s "$FAKE_TRILL_LOG" ]
+  # The turn after the agents land is the one that banners.
+  run hook_notify "{\"hook_event_name\":\"Stop\",\"cwd\":\"$dir\",\"background_tasks\":[]}"
+  [ "$status" -eq 0 ]
+  grep -q -- '--kind done' "$FAKE_TRILL_LOG"
+}
+
+@test "notify: background work that never ends does not hold the banner" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" sparkle)"
+  mktrill
+  run hook_notify "{\"hook_event_name\":\"Stop\",\"cwd\":\"$dir\",\"background_tasks\":[{\"id\":\"t1\",\"type\":\"shell\",\"status\":\"running\",\"description\":\"npm run dev\"}]}"
+  [ "$status" -eq 0 ]
+  grep -q -- '--kind done' "$FAKE_TRILL_LOG"
+}
+
+@test "notify: the idle ask is held behind a held Stop, a permission prompt is not" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" sparkle)"
+  mktrill
+  hook_notify "{\"hook_event_name\":\"Stop\",\"cwd\":\"$dir\",\"background_tasks\":[{\"id\":\"t1\",\"type\":\"subagent\",\"status\":\"running\",\"description\":\"assurance pass\"}]}"
+  : >"$FAKE_TRILL_LOG"
+
+  run hook_notify "{\"hook_event_name\":\"Notification\",\"cwd\":\"$dir\",\"notification_type\":\"idle_prompt\",\"message\":\"Claude is waiting for your input\"}"
+  [ "$status" -eq 0 ]
+  [ ! -s "$FAKE_TRILL_LOG" ]
+
+  # A real question has a real session blocked behind it, agents or no agents.
+  run hook_notify "{\"hook_event_name\":\"Notification\",\"cwd\":\"$dir\",\"notification_type\":\"permission_prompt\",\"message\":\"needs your permission to use Bash\"}"
+  [ "$status" -eq 0 ]
+  grep -q -- '--kind ask' "$FAKE_TRILL_LOG"
+}
+
 @test "notify: trill exit 2 (daemon down) is swallowed — the hook still exits 0" {
   local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" sparkle)"
   mktrill; export FAKE_TRILL_EXIT=2
@@ -1079,6 +1124,20 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   grep -q -- 'resolve scruff/alpha/sweepme' "$FAKE_TRILL_LOG"
   # And never the directory itself — something else on the machine watches it.
   [ -d "$asks" ]
+}
+
+@test "reap: a reaped lane drops the hold its agents left behind" {
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" sweepme)"
+  git -C "$main" merge -q --no-edit worktree-sweepme
+  mktrill
+  local waits="$XDG_STATE_HOME/scruff/waits"
+  mkdir -p "$waits"; : >"$waits/scruff.alpha.sweepme"
+
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  # A hold is keyed by <repo>/<lane>, so a lane made again under that name
+  # inside the hour would inherit it and lose its first idle ask.
+  [ ! -e "$waits/scruff.alpha.sweepme" ]
 }
 
 @test "reap: an ordinary reap launches no trill at all" {

@@ -1451,6 +1451,49 @@ that. The path, the flattening and "empty means nothing is waiting" are
 therefore a contract with more than scruff in it, and changing the naming breaks
 a reader that cannot be seen from here.
 
+**The wait markers.** `$SCRUFF_STATE/waits/<key>`, same naming, one empty file
+per lane whose last turn ended with background agents still running — and the
+reason there is a second directory rather than a second meaning in the first.
+
+A turn can end with the session still working: the client answers you, keeps its
+background agents running, and is woken again when they land. The `done` at the
+end of that first answer names a session you will find still spinning, and the
+idle `ask` a minute later parks a sticky fin for a question nobody asked. The
+banner worth having is the one after the LAST answer, and it arrives by itself,
+because agents landing wakes the session into another turn with another `Stop`.
+
+So both are held, from two different sources, because the client tells each
+event a different amount:
+
+- `Stop` carries `background_tasks`, the client's own list of in-flight
+  background work, whose schema says it is there to let a hook "distinguish
+  'session is done' from 'session is paused waiting for background work'". Live
+  data, so a hold can never outlast the turn that set it.
+- `Notification` carries no list — `message`, `title`, `notification_type` and
+  nothing else — so the held `Stop` leaves the marker and the idle ask reads it.
+  Read one key at a time and only on an idle ask, so unlike the asks dir it
+  needs no cheap-gate of its own.
+
+Only `subagent` and `workflow` tasks hold a banner back. A `shell` is routinely
+a dev server, a `monitor` never exits by definition, a `teammate` can sit idle
+inside a running task — holding on any of those would silence a lane for the
+rest of its life. Both the type and the status are read as ALLOW-lists for that
+reason, and everything the hook cannot read holds nothing: no task list, an
+unknown task type or status, an unknown `notification_type`, a permission
+prompt during background work. A held `Stop` also leaves an outstanding ask
+where it is, because the ask marker carries no content and a background
+worker's own permission prompt is indistinguishable from a stale idle fin. The
+direction of the error is the banner FIRING, always, because one you did not
+need costs a glance and one you did not get costs the feature.
+
+What leaks is a marker no later `Stop` will rewrite: a session that died
+mid-flight, a lane reaped while its agents ran. Reaping clears its own, beside
+the ask it already took down — a wait marker is keyed by `<repo>/<lane>`, so a
+lane made again under that name would otherwise inherit the hold. The rest stop
+holding after an hour, and the sweep drops them. An
+hour is off the measured shape of the wait: of 575 background agents on one
+machine, half were back inside 6 minutes, 99% inside 28, the longest at 85.
+
 A **relative** `$SCRUFF_STATE` is refused — scruff warns and uses the default. This
 state is machine-global, so resolving it against the process cwd scatters the
 lease and the ledger into whatever directory scruff was run from, routinely a git
