@@ -326,12 +326,21 @@ func (o *overlap) mainRef() string {
 // whenever it happened to produce the same hunk boundaries. Two lanes editing
 // the same line independently give both the very same base-side range.
 //
-// Never a WHOLE-FILE claim: hunkSpans gives an added or deleted file the whole
-// range, which does not just match main's range for that path — it SUBSUMES
-// every edit the side made to it, so a side that inherited main's add of a file
-// would have its own work in that file erased. Keeping a whole-file add
-// unsubtracted costs at most one loud row on a path two lanes both created.
-func (o *overlap) landed(base, rev string) []span {
+// A WHOLE-FILE claim is decided by content, not by range. hunkSpans gives an
+// added or deleted file the whole range, which does not just match main's
+// range for that path — it SUBSUMES every edit the side made to it, so taking
+// it out by range alone would erase a side's own work in a file main created.
+// Leaving every whole-file span in was the first answer, and it over-claimed
+// the other way: a reader cut from today's main carries every file main added
+// since a stale lane's base, and when that lane adds them too — half-landed,
+// or squash-merged and never reaped — the report drew ⚠ "the whole file" on
+// paths the reader had never opened. So a whole-file span comes out only when
+// the side's copy of that path IS main's copy at the tip, byte for byte: that
+// is inherited, and nothing of the side's can be hiding inside a range whose
+// content it did not change. A copy the side went on to edit — or, for a live
+// side, holds untracked, which `git diff` cannot see — keeps the whole-file
+// claim, and the add/add two lanes both authored stays as loud as it was.
+func (o *overlap) landed(base, rev string, s side) []span {
 	seen := map[string]bool{}
 	var out []span
 	for _, tip := range o.tips {
@@ -345,13 +354,63 @@ func (o *overlap) landed(base, rev string) []span {
 		if !gitx.IsAncestor(o.main, base, oid) || !gitx.IsAncestor(o.main, oid, rev) {
 			continue
 		}
-		for _, s := range sideSpans(side{o.main, oid}, base) {
-			if s.hi != overlapWhole {
-				out = append(out, s)
+		var whole []string
+		for _, sp := range sideSpans(side{o.main, oid}, base) {
+			if sp.hi == overlapWhole {
+				whole = append(whole, sp.path)
+				continue
 			}
+			out = append(out, sp)
+		}
+		for _, p := range o.inherited(s, oid, whole) {
+			out = append(out, span{p, 0, overlapWhole})
 		}
 	}
 	return out
+}
+
+// inherited is the subset of paths whose copy on this side is main's copy at
+// oid, byte for byte — the working tree's copy for a live side, the tip's for a
+// branch. It asks for everything that differs between oid and the side rather
+// than for the paths one by one: that list is the side's own work and short,
+// and it takes no pathspec, so a name with a glob character in it cannot match
+// anything but itself. Anything git cannot answer is reported as authored, the
+// safe direction for a tool that only ever advises.
+func (o *overlap) inherited(s side, oid string, paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	differ := map[string]bool{}
+	args := []string{"-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", oid}
+	if !s.live() {
+		args = append(args, s.ref)
+	}
+	out, err := gitx.Run(s.dir, args...)
+	if err != nil {
+		return nil
+	}
+	for _, p := range gitx.Lines(out) {
+		differ[p] = true
+	}
+	if s.live() {
+		// `git diff` compares tracked files only. A path main deleted that this
+		// side has since written again, untracked, is the side's own file —
+		// and the diff above sees it as absent on both sides.
+		untracked, err := gitx.Run(s.dir, "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard")
+		if err != nil {
+			return nil
+		}
+		for _, p := range gitx.Lines(untracked) {
+			differ[p] = true
+		}
+	}
+	var same []string
+	for _, p := range paths {
+		if !differ[p] {
+			same = append(same, p)
+		}
+	}
+	return same
 }
 
 // spent reports whether a side has nothing left to give main at all.
@@ -434,7 +493,7 @@ func (o *overlap) unlanded(base, rev string, s side) []span {
 		return nil
 	}
 	landed := map[span]bool{}
-	for _, l := range o.landed(base, rev) {
+	for _, l := range o.landed(base, rev, s) {
 		landed[l] = true
 	}
 	// Subtracted by EXACT range, never by overlap: a lane that edited INSIDE a

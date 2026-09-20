@@ -4783,6 +4783,37 @@ squash_rival() {
   [[ "$output" == *"no other lanes"* ]]     # a branch with nothing to land is not one
 }
 
+@test "overlap does not charge a reader with a file main added that a stale lane also adds" {
+  # The production shape: a lane half-landed — one of its files squash-merged,
+  # the rest still to come — and a reader cut from today's main, which carries
+  # that file because main does. Both sides then diff the file as a whole-file
+  # ADD against their shared base, and with whole-file spans left out of the
+  # landed subtraction the report drew ⚠ "the whole file" on a path the reader
+  # had never opened. Content decides: the reader's copy IS main's copy, byte
+  # for byte, so it was inherited, not authored, and comes out of the reader's
+  # side — while rival, which never rebased, keeps claiming the file it wrote.
+  mkoverlap
+  droplane snug "$SNUG"; droplane far "$FAR"
+  echo from-rival >"$RIVAL/new.md"
+  git -C "$RIVAL" add new.md
+  git -C "$RIVAL" commit -qm "rival: adds new.md"
+  echo from-rival >"$OV/new.md"                          # the add lands; line 10 has not
+  git -C "$OV" add new.md
+  git -C "$OV" commit -qm "squash: rival's new.md, as a new commit"
+  local after; after="$(hook_create "$OV" after)"
+  setline "$after/other.md" 1 mine
+  cd "$after"
+  wt_run overlap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"none in your files"* ]]
+  [[ "$output" != *"the whole file"* ]]
+  # The same reader read from its branch, the way a parked lane is: the copy
+  # compared is the tip's rather than the working tree's, and it is main's too.
+  wt_run overlap --committed-only
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"none in your files"* ]]
+}
+
 @test "overlap sees the squash on origin/main, not just the local main" {
   # The production shape: the squash lands on the REMOTE ref when a sibling
   # merges its PR, and the local main doesn't hear about it until someone
@@ -4901,6 +4932,33 @@ squash_rival() {
   # The FINDING row, not a bare filename: the intent line quotes the lane's
   # commit subject, so `*"new.md"*` alone is satisfied by the subject even when
   # the row it is supposed to assert has been subtracted away.
+  [[ "$output" == *"new.md the whole file"* ]]
+}
+
+@test "overlap still calls the reader's own edit to a file main added a collision" {
+  # The other half of the content rule: a reader cut from today's main carries
+  # main's new file, but this one went on to EDIT it, so its copy is no longer
+  # main's — authored, not inherited — and a stale lane adding the same file is
+  # the add/add the index exists to see. The whole file, not a line range: the
+  # shared base never had the file, so there is no coordinate system to be
+  # narrower in, and over-claiming is the safe direction.
+  mkoverlap
+  droplane snug "$SNUG"; droplane far "$FAR"
+  echo from-main >"$OV/new.md"
+  git -C "$OV" add new.md
+  git -C "$OV" commit -qm "main: adds new.md"
+  echo from-rival >"$RIVAL/new.md"
+  git -C "$RIVAL" add new.md
+  git -C "$RIVAL" commit -qm "rival: adds it too"
+  local after; after="$(hook_create "$OV" after)"
+  echo from-after >"$after/new.md"                       # uncommitted: the working tree is the copy
+  cd "$after"
+  wt_run overlap
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"new.md the whole file"* ]]
+  git -C "$after" commit -qam "after: rewrites new.md"    # committed: the tip is the copy
+  wt_run overlap --committed-only
+  [ "$status" -eq 4 ]
   [[ "$output" == *"new.md the whole file"* ]]
 }
 
