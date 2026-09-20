@@ -410,13 +410,13 @@ T == tree-of(<default>)  ⇒  the branch adds nothing to the default branch
 ```
 
 That's true for a squash merge, a manual re-implementation, and an empty branch
-alike — which is exactly why it must **not** be a reap trigger by default. Spec:
+alike — which is exactly why it is **not** a reap trigger. Spec:
 
 - surfaced as `landed.verdict = "contained"`, `via = "merge-tree-empty"`,
-  `confidence = "heuristic"`
-- shown in `scruff list` as `landed?` (with the `?`)
-- `scruff reap` ignores it unless given `--contained`, and even then requires
-  clean + unoccupied + at least one commit not in default
+  `confidence = "heuristic"` — in `--json` only; `scruff list` draws no marker
+  for it
+- `scruff reap` never acts on it: the lane is kept, and a person who knows the
+  work is upstream takes it with `scruff drop` (§6.4b)
 
 Same primitive as §7 — one `merge-tree` implementation serves both features.
 

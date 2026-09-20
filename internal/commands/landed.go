@@ -126,7 +126,7 @@ func (e *Env) builtinLanded(main, branch string) Verdict {
 
 	// 4. merge-tree-empty. Strategy-agnostic and offline, but it cannot tell a
 	//    squash merge from a branch that never did anything, so it is reported
-	//    and never acted on — `reap` ignores it without --contained.
+	//    and never acted on — `reap` keeps the lane, `scruff drop` takes it.
 	if mergeTreeEmpty(main, base, branch) {
 		return Verdict{Landed: false, Via: "merge-tree-empty", Confidence: "heuristic"}
 	}
