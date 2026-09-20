@@ -24,13 +24,16 @@ That is the whole flow: it stamps the version into every manifest, commits,
 pushes, tags `v<X.Y.Z>`, then blocks — painting the CI job tree live — until
 every publish job finishes, and exits non-zero if one goes red.
 
-**The tap is the one thing it cannot wait for.** `bump-tap` is green once it has
-pushed the branch, and the formula lands a few minutes later from the tap's own
-`check` run. If that run goes red the formula stays on the previous release and
-nothing here says so, by design.
+**The tap is the one thing this run cannot land.** `bump-tap` is green once it
+has pushed the branch, and the formula lands a few minutes later from the tap's
+own `check` run. `bench release scruff` watches that run next — after the lock
+ripple, bounded at 15 minutes — and ends on one of: live, red, never ran, still
+running. A red gate leaves the formula on the previous release; bench says so
+and sends a banner, and still exits 0, because the release is on five
+registries by then.
 
 So a `brew install hausfold/tap/scruff` still fetching the old tag after a green
-release is a **red or missing run** at
+release, on a screen nobody read, is a **red or missing run** at
 [hausfold/homebrew-tap](https://github.com/hausfold/homebrew-tap/actions) —
 missing being the worse of the two, and what a `bump/scruff-v*` branch sitting
 there with no run beside it means. Fix the formula, then **re-run failed jobs**
