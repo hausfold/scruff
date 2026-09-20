@@ -1320,8 +1320,10 @@ false alarm that was actually drawn:
    merge base falls behind main, and a reader cut from the new main carries the
    landed hunk as if it wrote it. Main's own ranges between base and tip are
    subtracted — per side, only from a side that actually contains main's
-   commit, by exact range, and never a whole-file add (which would subsume the
-   side's own edits to that file).
+   commit, by exact range; a whole-file add or delete only where the side's
+   copy of that path is main's byte for byte (inherited, not authored — a copy
+   the side went on to edit keeps the whole-file claim, and two lanes both
+   creating one file stay loud).
 3. **A lane with no commits is counted, not dropped** — spent is for work that
    landed, not work that never happened, and the just-spawned neighbour is the
    one worth knowing about before you plan.
