@@ -1350,15 +1350,56 @@ hook_notify() { # hook_notify <json> — drive the notify hook
     || fail "the spawned lane must follow the lane that spawned it: $output"
 }
 
-@test "reap: a fresh lane is still reapable — the new verdict is a label only" {
-  # `fresh` splits what a reader is TOLD, never what the sweep does: there is
-  # nothing on a never-committed branch to lose, exactly as before.
+@test "reap: a lane made a moment ago with nothing on it is KEPT" {
+  # The lane this exists for was a `scruff child` checkout on hausfold.co,
+  # taken by another session's reap one second after it was made. Nothing had
+  # been committed on it yet, so it was landed by ancestry; nothing was
+  # standing in it either, because an agent's shell starts each command from a
+  # fresh cwd and so holds no checkout between two tool calls. Both halves of
+  # the sweep's safety story said yes, and the agent lost its checkout.
+  local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" newborn)"
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept newborn (acme-alpha)"* ]] || fail "$output"
+  [[ "$output" == *"nothing committed on it yet"* ]] || fail "$output"
+  [ -e "$dir/.git" ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-newborn
+}
+
+@test "reap: the kept-fresh line names when the window shuts and how to skip it" {
+  # This is the one refusal in the sweep that resolves itself, so it has to say
+  # so — and offer the drop, because "I made two lanes by mistake a minute ago"
+  # is exactly the case the grace now says no to.
+  local main; main="$(mkrepo alpha)"; hook_create "$main" newborn >/dev/null
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Sweepable in "* ]] || fail "the window is not named: $output"
+  [[ "$output" == *"scruff drop newborn"* ]] || fail "no way past it: $output"
+}
+
+@test "reap: a never-committed lane past its grace window is swept as before" {
+  # A window, not a new refusal. A lane nobody ever came back to is worth
+  # nothing to keep, and the age is read off the `.git` pointer `git worktree
+  # add` wrote — which is what `touch` here backdates.
   local main dir; main="$(mkrepo alpha)"; dir="$(hook_create "$main" nothing)"
+  touch -t 202001010000 "$dir/.git"
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped nothing (acme-alpha)"* ]] || fail "$output"
   [ ! -e "$dir" ]
   [ "$(reg_rows)" -eq 0 ]
+}
+
+@test "reap: the grace spares the checkout only, never an unlanded branch's turn" {
+  # The window keys on `fresh`, not on age alone — otherwise a lane whose PR
+  # merged five minutes ago would be held back too, and `/ship`'s reap right
+  # after a merge is the commonest sweep there is.
+  local main dir; main="$(mkrepo alpha)"; dir="$(mkwt "$main" shipped)"
+  git -C "$main" merge -q --no-edit worktree-shipped
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped shipped (acme-alpha)"* ]] || fail "$output"
+  [ ! -e "$dir" ]
 }
 
 @test "reap: keeps a landed checkout with uncommitted changes" {
