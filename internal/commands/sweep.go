@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hausfold/scruff/internal/gitx"
 	"github.com/hausfold/scruff/internal/occupancy"
@@ -26,6 +29,7 @@ type SweepResult struct {
 	Strays      []string
 	SkippedLive []string      // reapable but for a live process standing in the checkout
 	Dirty       []string      // reapable but for uncommitted work in the checkout
+	Fresh       []string      // landed only because nothing has happened on it yet, and too new to sweep
 	Relanded    []string      // landed PR, but the branch committed past it
 	Diverged    []string      // landed PR, but the tip isn't built on what merged
 	Unlanded    []string      // clean and unoccupied, but nothing has landed it yet
@@ -120,9 +124,20 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 				res.Dirty = append(res.Dirty, dirtyNote(entry, dirt))
 				continue // uncommitted work — leave it for a human
 			}
-			if !e.Landed(entry.Main, entry.Branch).Landed {
+			v := e.Landed(entry.Main, entry.Branch)
+			if !v.Landed {
 				e.noteRelanded(&res, entry)
 				continue
+			}
+			if v.Via == "never-diverged" {
+				// "Nothing to lose" is true of the BRANCH and false of the
+				// checkout somebody is about to work in, and occupancy — the
+				// guard that should cover the difference — cannot see an agent.
+				// See laneGrace.
+				if age := laneAge(entry.Path); age < laneGrace {
+					res.Fresh = append(res.Fresh, freshNote(entry, age))
+					continue
+				}
 			}
 			if _, err := gitx.Run(entry.Main, "worktree", "remove", entry.Path); err != nil {
 				continue // free the branch first, or don't touch the branch
@@ -248,6 +263,83 @@ func porcelainPath(l string) string {
 		l = unq
 	}
 	return l
+}
+
+// laneGrace is how long a lane nothing has ever been committed on is spared the
+// live sweep.
+//
+// Occupancy is the guard that ought to cover this, and for a human it does: a
+// shell sits in the checkout with its cwd there, and lsof reports it. An agent
+// holds nothing. Claude Code's Bash tool starts every command from a fresh cwd,
+// so between two tool calls there is no process standing in the lane at all — a
+// lane made for an agent is invisible to occupancy from `scruff child` until its
+// first commit makes it unlanded, and any other session's `scruff reap` in that
+// window takes it. Measured once at one second, which is as long as a lane on
+// hausfold.co lasted.
+//
+// An hour, chosen the way the wait markers' hour was: longer than the gap
+// between a lane opening and its first real commit, and cheap when it is wrong.
+// What a too-long window costs is an empty branch lingering until the next
+// sweep — worth nothing to keep, and `scruff drop` still takes it on the word.
+// What a too-short one costs is the checkout yanked out from under a working
+// agent, which is invariant 2 broken by the sweep that exists to keep it.
+//
+// A var so a test can shorten it; nothing reads it from the environment.
+var laneGrace = time.Hour
+
+// laneAge is how long ago this checkout was made.
+//
+// From the mtime of the worktree's `.git` file — the gitdir pointer that
+// `git worktree add` writes once and nothing rewrites afterwards. Not the
+// branch's reflog, which §3.5 already leans on for freshness: a repo with
+// `core.logAllRefUpdates=false` has none, and the half of this that keeps a
+// live agent's checkout must not quietly stop working there. Not the directory
+// either, whose mtime moves the first time anything writes a file at the top
+// level of the tree.
+//
+// Unreadable resolves to 0 — the youngest possible lane, and so to KEEP, like
+// every other uncertainty in this file. It is barely reachable: a Live entry
+// stat'd that same file a moment ago (checkoutState), so getting here means the
+// checkout went away mid-sweep.
+//
+// A lane resumed from parked gets a rebuilt checkout and so a fresh age, which
+// is right: `scruff <name>` rebuilt it because somebody is about to stand in it.
+func laneAge(path string) time.Duration {
+	fi, err := os.Stat(filepath.Join(path, ".git"))
+	if err != nil {
+		return 0
+	}
+	return time.Since(fi.ModTime())
+}
+
+// freshNote is the "kept" line for a lane still inside its grace window.
+//
+// It names the window rather than just refusing, because this is the one
+// refusal in the sweep whose cause resolves on its own: every other `kept` line
+// asks the reader to do something, and "wait" is a perfectly good answer here.
+// The drop is offered in the same breath for the case it is really about — two
+// lanes opened by mistake a minute ago, which is exactly when the sweep now
+// says no.
+func freshNote(entry Entry, age time.Duration) string {
+	return entry.Label() +
+		" — made " + roughly(age) + " ago with nothing committed on it yet, which is" +
+		" also what a lane looks like while an agent is still reading its way in." +
+		" Sweepable in " + roughly(laneGrace-age) +
+		", or now: scruff drop " + entry.Name()
+}
+
+// roughly renders a stretch of the grace window in the units that sentence
+// wants. Not a general duration formatter: everything it is handed lies between
+// zero and laneGrace, and Duration.String's "4m13.2318s" is noise in a line
+// about whether to wait.
+func roughly(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "under a minute"
+	case d < time.Hour:
+		return itoa(int(d/time.Minute)) + "m"
+	}
+	return itoa(int(d/time.Hour)) + "h"
 }
 
 // noteRelanded records why a lane declined to be reaped, so it says something

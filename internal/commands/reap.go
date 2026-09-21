@@ -42,6 +42,9 @@ func (e *Env) Reap(deadEnds bool) error {
 	for _, note := range res.Dirty {
 		ui.Say("kept %s", note)
 	}
+	for _, note := range res.Fresh {
+		ui.Say("kept %s", note)
+	}
 	for _, note := range res.Relanded {
 		ui.Say("kept %s", note)
 	}
@@ -66,7 +69,7 @@ func (e *Env) Reap(deadEnds bool) error {
 		// Only when nothing above spoke. The old unconditional line listed the
 		// three reasons in the abstract right after naming the concrete one,
 		// which read as a second, contradictory verdict.
-		spoke := len(res.SkippedLive) + len(res.Dirty) + len(res.Relanded) +
+		spoke := len(res.SkippedLive) + len(res.Dirty) + len(res.Fresh) + len(res.Relanded) +
 			len(res.Diverged) + len(res.Unlanded) + len(res.DeadEnds) + len(res.Strays)
 		if spoke == 0 {
 			ui.Say("nothing to reap — every lane is either unmerged, dirty, or in use.")
