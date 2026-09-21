@@ -59,8 +59,9 @@ machine and three invariants, in this priority order:
 
 1. **Never lose work.** Every destructive path parks first. The failure
    direction is always *a branch lingers*, never *a tree vanished*.
-2. **Never reap what's in use.** Occupied, dirty, or not provably landed ⇒
-   keep. Uncertainty resolves to keep — including when GitHub is unreachable.
+2. **Never reap what's in use.** Occupied, dirty, not provably landed, or made
+   in the last hour with nothing committed on it ⇒ keep. Uncertainty resolves to
+   keep — including when GitHub is unreachable.
 3. **The registry is truth.** Not the filesystem, not `git worktree list` —
    those are derived, and they lie.
 

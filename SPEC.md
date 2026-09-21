@@ -466,10 +466,41 @@ else: cherry-pick writes `cherry-pick:`, revert `revert:`, rebase
 `branch: Reset to`. A prefix list calls every one of those fresh, which is this
 same bug pointing the other way.
 
-**It is a LABEL, not a gate.** `Landed` stays true, so `reap`, the parked sweep
-and the remove hook behave exactly as they did: a never-committed branch has
-nothing to lose, and this spec is about what a reader is told, not what the state
-machine does.
+**`Landed` stays true**, and the label is what `--json` reports
+(`verdict: fresh`). The parked sweep and the remove hook are untouched — the
+first has no checkout to protect and the second is a pane saying it is done.
+
+**The live sweep gates on it for an hour** (`laneGrace`). "Nothing to lose" is
+true of the BRANCH and false of the checkout somebody is about to work in, and
+the guard for that difference is occupancy — which cannot see an agent. Claude
+Code's Bash tool starts every command from a fresh cwd, so between two tool
+calls no process stands in the lane at all: a `scruff child` checkout is
+invisible to `lsof` from the moment it is made until its first commit makes it
+unlanded, and any other session's `scruff reap` in that window takes it.
+Measured once at one second, on hausfold.co.
+
+**The gate is not the label.** `reap` asks git directly (`neverWorkedOn`), never
+`Via == "never-diverged"`, and the two differ in the two places that matter.
+With no reflog to read, the label falls back to `ancestry` — free for a display,
+fatal for a one-second-old lane if the grace keyed on it — so the deleting caller
+resolves that silence toward **keep** while the rendering one keeps the old
+answer. And a `landed` hook names its own `via` (§6.5), which is a claim about
+merging; whether somebody is standing in a checkout is not a claim any house rule
+about merging gets to make. The cost, stated: in a reflog-less repo a
+fast-forward-merged lane carries no commits of its own either, so it is held for
+an hour after the merge rather than swept at once.
+
+The age is the mtime of the worktree's `.git` pointer — written by
+`git worktree add`, rewritten only by `git worktree repair`, which
+`scruff doctor --migrate-base` runs, so a migration holds every lane it touched
+for one more hour. Unreadable resolves to the youngest possible lane, and so to
+keep.
+
+An hour, and what the two wrong answers cost is the whole argument: too long
+leaves an empty branch lingering until the next sweep, which `scruff drop` takes
+on the word anyway; too short is invariant 2 broken by the sweep that exists to
+keep it. The refusal says both the window and the drop, because it is the one
+`kept` line in the sweep whose cause resolves on its own.
 
 ## 4. Repo identity: the remote slug, not the directory basename
 
@@ -1222,7 +1253,7 @@ scruff's inherited opinions, in the order they are worth prising out:
 | the `worktree-` branch prefix | `create.go`, `new.go`, `park.go` | a `branch` seam, or a config template |
 | how each client is started / resumed | `agent.go` | adapter TOML (§5.3) — already specced |
 | `gh`, and GitHub's argv | `landed.go` | forge adapter (§5.4) — already specced |
-| what makes a lane **reapable** | `sweep.go` | a `reapable` seam — see above; blocked on the three opinions it spans |
+| what makes a lane **reapable** | `sweep.go` | a `reapable` seam — see above; blocked on the three opinions it spans. **The one-hour grace on a never-worked lane (§3.5) is a fourth**, and a machine with leases or with slow agents would answer it differently — but it is deliberately not a knob of its own: a second, weaker dial for "is an agent in here" is how it and the lease (§9.1) drift apart |
 | occupancy = `lsof` cwd prefix | `sweep.go` | a provider list (§9) |
 | `$BASE/<bucket>/<name>` layout | `new.go` | a `path` seam |
 | the `wip:` commit message and park semantics | `park.go`, `remove.go` | a `park` seam |

@@ -25,7 +25,9 @@ In priority order; trading one away is wrong even with a green suite.
 
 1. **Never lose work.** Every destructive path parks first.
 2. **Never reap something in use.** Occupied, dirty, not-provably-landed or
-   forge-unreachable means keep.
+   forge-unreachable means keep — and so does a checkout made in the last hour
+   with nothing committed on it, because an agent's cwd dies between tool calls
+   and occupancy has nothing to see (SPEC.md §3.5).
 3. **The locked registry is the source of truth**, not the filesystem or
    `git worktree list`.
 

@@ -149,6 +149,58 @@ func (e *Env) builtinLanded(main, branch string) Verdict {
 // nothing — but its reflog kept the entry, and a fresh branch's holds only
 // `branch: Created from …`.
 //
+// The inverted reflog test is reflogOnlyCreation's. Uncertainty resolves to
+// false here — "not fresh", i.e. the old `ancestry` answer — because the cost of
+// guessing wrong is a display that says `merged` where it could have said
+// `fresh`, which is exactly where this ladder was before. neverWorkedOn is the
+// same question asked by the code that DELETES, and resolves it the other way.
+func neverDiverged(main, base, branch string) bool {
+	if carriesCommits(main, base, branch) {
+		return false
+	}
+	only, known := reflogOnlyCreation(main, branch)
+	return known && only
+}
+
+// neverWorkedOn is the same question with its uncertainty resolved the OTHER
+// way, for the caller that deletes rather than the one that renders: has
+// nothing PROVABLY ever happened on this branch?
+//
+// The two differ only where the reflog cannot answer, and they differ there on
+// purpose. neverDiverged is a display label, so an unreadable reflog costs it
+// nothing to fall back to `ancestry`. The sweep's grace window (see laneGrace)
+// is a live agent's checkout, so the same silence has to resolve to keep — a
+// repo with `core.logAllRefUpdates=false` is exactly where a one-second-old
+// lane would otherwise still be swept out from under somebody.
+//
+// It is also deliberately asked of GIT rather than read off the Verdict. A
+// `landed` hook names its own `via` (hookVerdict), so a shop that merges into a
+// release train would get no grace on any lane if this keyed on the verdict's
+// spelling — and the hook is a claim about landedness, which is not the
+// question here. What the grace is for is that occupancy cannot see an agent,
+// and no house rule about merging changes that.
+//
+// The cost, stated: in a repo with no reflogs, a lane that fast-forward-merged
+// carries no commits of its own either, so it is held for an hour after the
+// merge instead of being swept at once. An hour of an empty checkout, in a
+// configuration that is already degraded, against invariant 2.
+func neverWorkedOn(main, branch string) bool {
+	if carriesCommits(main, gitx.DefaultBranch(main), branch) {
+		return false
+	}
+	only, known := reflogOnlyCreation(main, branch)
+	return only || !known
+}
+
+// carriesCommits reports whether the branch has commits of its own right now.
+func carriesCommits(main, base, branch string) bool {
+	out, err := gitx.Run(main, "rev-list", "--count", base+".."+branch)
+	return err != nil || out != "0"
+}
+
+// reflogOnlyCreation reports whether a branch's reflog holds NOTHING but its own
+// creation, and whether it could be read at all.
+//
 // The test is deliberately inverted: it requires that nothing but creation ever
 // happened, rather than enumerating what "something happened" looks like. That
 // enumeration is a trap — `git commit` writes `commit:`, but cherry-pick writes
@@ -157,32 +209,28 @@ func (e *Env) builtinLanded(main, branch string) Verdict {
 // silently calls every one of those "fresh", which is this bug pointing the
 // other way — a lane whose work really did land losing its landed verdict.
 //
-// Uncertainty resolves to false — "not fresh", i.e. the old `ancestry` answer.
-// A repo with reflogs disabled (`core.logAllRefUpdates=false`) or entries aged
-// out by gc prints nothing here, and an empty reflog proves nothing; the cost of
-// guessing wrong is a display that says `merged` where it could have said
-// `fresh`, which is exactly where this ladder was before.
-func neverDiverged(main, base, branch string) bool {
-	if out, err := gitx.Run(main, "rev-list", "--count", base+".."+branch); err != nil || out != "0" {
-		return false
-	}
+// The second return is the whole reason this is not a plain bool: a repo with
+// reflogs disabled (`core.logAllRefUpdates=false`) or entries aged out by gc
+// prints nothing, an empty reflog proves nothing either way, and the two
+// callers need that silence resolved in opposite directions.
+func reflogOnlyCreation(main, branch string) (only, known bool) {
 	out, err := gitx.Run(main, "reflog", "show", "--format=%gs", branch)
 	if err != nil {
-		return false
+		return false, false
 	}
 	lines := gitx.Lines(out)
 	if len(lines) == 0 {
-		return false // no reflog at all — can't prove anything
+		return false, false
 	}
 	for _, l := range lines {
 		// The ONE subject a branch that has only ever been created can carry.
 		// Note the trailing space: it excludes `branch: Reset to …`, which is a
 		// hand-moved tip and very much something happening.
 		if !strings.HasPrefix(l, "branch: Created from ") {
-			return false
+			return false, true
 		}
 	}
-	return true
+	return true, true
 }
 
 // patchEquivalent reports whether every commit on branch has a patch-id

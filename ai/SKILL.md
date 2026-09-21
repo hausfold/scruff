@@ -137,9 +137,9 @@ worktree remove`.
 
 ## Traps
 
-- **A lane with zero commits is instantly sweepable.** A brand-new `scruff
-  new`/`scruff child` checkout has no commits, so another session's `scruff reap`
-  can take it on ancestry. Commit something immediately.
+- **Nothing committed on it? The lane is held for one hour, then only a commit
+  holds it** — your shell does not: a tool call from a fresh cwd leaves nothing
+  for `lsof`. Commit early, or `scruff heartbeat <path> --pid <client pid>`.
 - **`scruff reap` deliberately spares a branch whose PR merged but which kept
   committing.** GitHub deletes the head branch on merge, so those later commits
   have no remote — that's `scruff reship`, not a bug.
