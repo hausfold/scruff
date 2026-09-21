@@ -74,7 +74,8 @@ scruff spawn "$repo" --derived-name <name> --prompt-file <that file>
 Read the exit code: **0** the lane opened (its path is on stdout — report the
 lane and branch); **2** the open hook declined and **3** nothing opened it —
 neither is a failure, the lane exists: report the command scruff printed, and
-soon, since a lane with no commits is sweepable by any pane's `scruff reap`;
+within the hour, since a lane with nothing committed on it is sweepable by any
+pane's `scruff reap` once its grace window shuts;
 **1** the invocation was wrong, usually a repo path that isn't a main checkout.
 
 Then stop — **the handoff is done the moment the lane opens.** This session need

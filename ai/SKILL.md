@@ -137,9 +137,14 @@ worktree remove`.
 
 ## Traps
 
-- **A lane with zero commits is instantly sweepable.** A brand-new `scruff
-  new`/`scruff child` checkout has no commits, so another session's `scruff reap`
-  can take it on ancestry. Commit something immediately.
+- **A lane with nothing committed on it holds itself for one hour, and after
+  that only a commit holds it.** A brand-new `scruff new`/`scruff child` checkout
+  is landed by ancestry, and nothing is standing in it either: a tool call that
+  starts from a fresh cwd leaves no process there between calls, so `lsof` sees
+  an empty checkout. `reap` spares it for its first hour and names the window;
+  past that, any other session's sweep takes it. Commit early — and if the lane
+  will sit unworked longer than that, `scruff drop` it rather than leaving it to
+  be swept out from under you.
 - **`scruff reap` deliberately spares a branch whose PR merged but which kept
   committing.** GitHub deletes the head branch on merge, so those later commits
   have no remote — that's `scruff reship`, not a bug.

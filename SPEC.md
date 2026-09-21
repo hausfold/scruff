@@ -466,10 +466,31 @@ else: cherry-pick writes `cherry-pick:`, revert `revert:`, rebase
 `branch: Reset to`. A prefix list calls every one of those fresh, which is this
 same bug pointing the other way.
 
-**It is a LABEL, not a gate.** `Landed` stays true, so `reap`, the parked sweep
-and the remove hook behave exactly as they did: a never-committed branch has
-nothing to lose, and this spec is about what a reader is told, not what the state
-machine does.
+**`Landed` stays true**, and the label is what `--json` reports
+(`verdict: fresh`). The parked sweep and the remove hook are untouched — the
+first has no checkout to protect and the second is a pane saying it is done.
+
+**The live sweep gates on it for an hour** (`laneGrace`). "Nothing to lose" is
+true of the BRANCH and false of the checkout somebody is about to work in, and
+the guard for that difference is occupancy — which cannot see an agent. Claude
+Code's Bash tool starts every command from a fresh cwd, so between two tool
+calls no process stands in the lane at all: a `scruff child` checkout is
+invisible to `lsof` from the moment it is made until its first commit makes it
+unlanded, and any other session's `scruff reap` in that window takes it.
+Measured once at one second, on hausfold.co.
+
+The age is the mtime of the worktree's `.git` pointer, which `git worktree add`
+writes once and nothing rewrites — pointedly **not** the reflog this section
+otherwise rests on, because §3.5's own degradation (`core.logAllRefUpdates=false`,
+entries aged out by gc) is allowed to cost a display label and must not cost a
+working agent its checkout. Unreadable resolves to the youngest possible lane,
+and so to keep.
+
+An hour, and what the two wrong answers cost is the whole argument: too long
+leaves an empty branch lingering until the next sweep, which `scruff drop` takes
+on the word anyway; too short is invariant 2 broken by the sweep that exists to
+keep it. The refusal says both the window and the drop, because it is the one
+`kept` line in the sweep whose cause resolves on its own.
 
 ## 4. Repo identity: the remote slug, not the directory basename
 
