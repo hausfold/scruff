@@ -124,16 +124,17 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 				res.Dirty = append(res.Dirty, dirtyNote(entry, dirt))
 				continue // uncommitted work — leave it for a human
 			}
-			v := e.Landed(entry.Main, entry.Branch)
-			if !v.Landed {
+			if !e.Landed(entry.Main, entry.Branch).Landed {
 				e.noteRelanded(&res, entry)
 				continue
 			}
-			if v.Via == "never-diverged" {
-				// "Nothing to lose" is true of the BRANCH and false of the
-				// checkout somebody is about to work in, and occupancy — the
-				// guard that should cover the difference — cannot see an agent.
-				// See laneGrace.
+			// "Nothing to lose" is true of the BRANCH and false of the checkout
+			// somebody is about to work in, and occupancy — the guard that
+			// should cover the difference — cannot see an agent. See laneGrace.
+			//
+			// Asked of git, not of v.Via: a `landed` hook names its own via, and
+			// the grace is not a claim about landedness. See neverWorkedOn.
+			if neverWorkedOn(entry.Main, entry.Branch) {
 				if age := laneAge(entry.Path); age < laneGrace {
 					res.Fresh = append(res.Fresh, freshNote(entry, age))
 					continue
@@ -284,18 +285,19 @@ func porcelainPath(l string) string {
 // What a too-short one costs is the checkout yanked out from under a working
 // agent, which is invariant 2 broken by the sweep that exists to keep it.
 //
-// A var so a test can shorten it; nothing reads it from the environment.
+// Deliberately not a knob: no env var, no config key. A machine that can answer
+// "is an agent in this lane" properly answers it with a lease (SPEC.md §9.1),
+// and a second, weaker dial for the same question is how the two drift apart.
 var laneGrace = time.Hour
 
 // laneAge is how long ago this checkout was made.
 //
-// From the mtime of the worktree's `.git` file — the gitdir pointer that
-// `git worktree add` writes once and nothing rewrites afterwards. Not the
-// branch's reflog, which §3.5 already leans on for freshness: a repo with
-// `core.logAllRefUpdates=false` has none, and the half of this that keeps a
-// live agent's checkout must not quietly stop working there. Not the directory
-// either, whose mtime moves the first time anything writes a file at the top
-// level of the tree.
+// From the mtime of the worktree's `.git` file — the gitdir pointer
+// `git worktree add` writes, and that only `git worktree repair` rewrites, which
+// `scruff doctor --migrate-base` does: every migrated lane is held one more
+// hour, which is the safe direction and worth knowing. Not the directory, whose
+// mtime moves the first time anything writes a file at the top level of the
+// tree.
 //
 // Unreadable resolves to 0 — the youngest possible lane, and so to KEEP, like
 // every other uncertainty in this file. It is barely reachable: a Live entry

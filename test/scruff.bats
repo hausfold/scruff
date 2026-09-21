@@ -1377,6 +1377,22 @@ hook_notify() { # hook_notify <json> — drive the notify hook
   [[ "$output" == *"scruff drop newborn"* ]] || fail "no way past it: $output"
 }
 
+@test "reap: the grace survives a repo whose reflog cannot answer" {
+  # §3.5's own degradation, and the reason the grace asks git rather than
+  # reading the verdict's spelling: with no reflog, `fresh` falls back to the
+  # `ancestry` LABEL. That costs a display nothing and used to cost a
+  # one-second-old lane its checkout.
+  local main dir; main="$(mkrepo alpha)"
+  git -C "$main" config core.logAllRefUpdates false
+  dir="$(hook_create "$main" newborn)"
+  rm -f "$main/.git/logs/refs/heads/worktree-newborn"
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept newborn (acme-alpha)"* ]] || fail "$output"
+  [ -e "$dir/.git" ]
+  git -C "$main" show-ref -q --verify refs/heads/worktree-newborn
+}
+
 @test "reap: a never-committed lane past its grace window is swept as before" {
   # A window, not a new refusal. A lane nobody ever came back to is worth
   # nothing to keep, and the age is read off the `.git` pointer `git worktree
@@ -2918,6 +2934,20 @@ setcfg() { # setcfg <toml body> — plant the machine config
   cd "$TMP"; wt_run reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"kept"*"plain"* ]]         # unmerged: scruff's own rule held
+  [ -e "$dir/.git" ]
+}
+
+@test "hooks: landed — a hook's yes does not override the grace on a brand-new lane" {
+  # The hook owns "has this landed"; it does not own "is somebody standing in
+  # this checkout", which is the question the grace answers. A shop that merges
+  # into a release train would otherwise get no grace on any lane at all.
+  local main dir hook; main="$(mkrepo alpha)"; dir="$(hook_create "$main" newborn)"
+  hook="$(mkhook landed 'echo "{\"via\": \"release-train\"}"; exit 0')"
+  setcfg "[hooks]
+landed = \"$hook\""
+  cd "$TMP"; wt_run reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept newborn (acme-alpha)"* ]] || fail "the hook's yes swept a newborn lane: $output"
   [ -e "$dir/.git" ]
 }
 
