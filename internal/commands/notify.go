@@ -87,11 +87,8 @@ func (e *Env) HookNotify(stdin io.Reader) error {
 // resolveAsk is the other direction: this lane's session is moving again, so
 // the question its fin asks has been answered. `trill resolve` is idempotent —
 // resolving something already dismissed prints 0 and exits 0 — so the only
-// thing to be careful about here is COST, not correctness.
-//
-// PostToolUse fires on every tool call in every pane, and the work below would
-// otherwise be a registry read plus a launch of Trill.app's binary each time.
-// So the marker written when an ask went up is the gate: no marker, no work.
+// thing to be careful about here is COST, not correctness — which is what the
+// outstanding-ask marker below is for: no marker, no work.
 func (e *Env) resolveAsk(payload map[string]any) {
 	if !anyAskOutstanding() {
 		return
@@ -301,10 +298,8 @@ func (e *Env) askKeyFor(payload map[string]any) (key, lane string) {
 // identity, so it falls back to the client's session id: a pane's directory
 // can change under it mid-session, and its basename is not unique anyway.
 //
-// ⚠️ This prefix is half of a JOIN, so it moves in step with haus or not at
-// all. haus's lane-seen.sh matches a zmx session named `scruff.<repo>.<lane>`
-// against this key with the slashes flattened; the two spellings have to agree
-// or the bar quietly stops resolving anything.
+// ⚠️ This prefix is half of haus's lane-seen.sh join, like laneID's basename:
+// it moves in step with haus or not at all.
 func askKey(lane string, payload map[string]any) string {
 	if lane != "" {
 		return askKeyPrefix + lane
@@ -315,8 +310,7 @@ func askKey(lane string, payload map[string]any) string {
 	return ""
 }
 
-// askKeyPrefix is the one spelling scruff writes, and now the only one it
-// answers to.
+// askKeyPrefix is the one spelling scruff writes and answers to.
 const askKeyPrefix = "scruff/"
 
 // takeDownAsk clears one key's marker and, when there was one, resolves its
@@ -563,12 +557,11 @@ func markAskOutstanding(key string) {
 	_ = os.WriteFile(askMarker(key), nil, 0o644)
 }
 
-// clearAskOutstanding drops one key's marker and reports whether there was one
-// — which is also the answer to "was this lane the one waiting?".
+// clearAskOutstanding drops one key's marker and reports whether there was one.
 //
 // The empty key is not a key. `askMarker("")` is the asks DIRECTORY, so
 // without this line an unnamed lane would delete the whole dir the moment it
-// happened to be empty — and a consumer reading it (see the section header)
+// happened to be empty — and a desktop reading it (SPEC.md §9.1)
 // would get an ENOENT where it expects "nothing is waiting". The two hook
 // callers check before calling; the sweep's does not, because this is where
 // the check belongs.
