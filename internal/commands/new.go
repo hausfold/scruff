@@ -844,21 +844,19 @@ func (e *Env) freeName(main, want string, given bool) (name, dir string, err err
 		}
 		fitted := fitName(want, base)
 		if fitted == "" {
-			// Nothing of `want` survives the budget — an inherited name that is
-			// all separators, which `scruff child` can pick up from a branch a
-			// person made by hand. scruff chose this name, so scruff can choose
-			// another rather than open `worktree--2`.
+			// The all-separators case above, one suffix later: scruff chose this
+			// name, so it can choose another rather than open `worktree--2`.
 			fitted = fitName(randomName(), base)
 		}
 		name = fitted + suffix
 	}
 }
 
-// randomName gives an unnamed spawn a throwaway two-word name, in the spirit of
-// the ones Claude generates. It only has to be recognisable in a listing and on
-// a branch for as long as the work lives — `scruff spawn` (the palette) is where
-// names come from the TASK; this is the "just give me a pane" path, so it
-// doesn't ask for one.
+// randomName is the throwaway two-word name a lane gets when nobody named it and
+// nothing could: no namer configured or no task to name it after
+// (nameForNewLane), a `child` from a pane that is not in a lane, or a name that
+// fitted to nothing (freeName). It only has to be recognisable in a listing and
+// on a branch for as long as the work lives.
 func randomName() string {
 	adjectives := []string{
 		"cozy", "plucky", "snug", "spry", "zippy", "dozy", "bouncy", "chipper",

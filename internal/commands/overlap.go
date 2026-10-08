@@ -40,9 +40,7 @@ import (
 //
 // Advisory, never a gate (SPEC.md §7). It refuses nothing and blocks nothing;
 // it reports, and the exit code says how loudly: 0 clear · 3 same file · 4
-// same region, or a merge-tree conflict. Ported from the workshop's `bench
-// overlap`, prod fixes and all; this is the verb §7 milestoned, in the binary
-// that owns the registry it reads.
+// same region, or a merge-tree conflict.
 
 // overlapFuzz is git's own default context. Two edits within this many lines
 // of each other are what `git merge` will present as one conflicted hunk, so it
