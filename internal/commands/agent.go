@@ -24,9 +24,9 @@ import (
 // Every lane records its client in the registry, so changing the machine's
 // default later never makes a parked Codex branch reopen in Claude.
 //
-// In 0.2 this whole file collapses into adapter TOML (SPEC.md §5.3) — which is
-// why the per-client knowledge is concentrated in three small switches rather
-// than spread through the commands that call them.
+// When agent clients become adapter TOML (SPEC.md §5.3) this whole file
+// collapses into it — which is why the per-client knowledge is concentrated in
+// three small switches rather than spread through the commands that call them.
 
 // ── the prompt is DATA, and every client's parser has to be told so ──────────
 //
@@ -41,8 +41,8 @@ import (
 // separate `--prompt` as another flag.
 // Never go back to appending the prompt bare.
 
-// agentSpec is what scruff needs to know about a client. The 0.2 adapter loader
-// produces exactly this struct from a TOML file.
+// agentSpec is what scruff needs to know about a client: SPEC.md §5.3's agent
+// adapter, as a struct.
 type agentSpec struct {
 	id    string
 	start func(image, prompt string) []string
@@ -113,9 +113,8 @@ func specFor(id string) (agentSpec, bool) {
 				return []string{"pi", "--", prompt}
 			},
 			open: []string{"pi"},
-			// `pi -r` opens the session picker for the current project, and
-			// `pi -c` continues the newest session there — the same two rungs
-			// codex has, spelled shorter.
+			// `--resume` opens pi's session picker for the current project and
+			// `--continue` continues the newest session there: codex's two rungs.
 			resume:    []string{"pi", "--resume"},
 			last:      []string{"pi", "--continue"},
 			imageFlag: true,
@@ -467,13 +466,9 @@ func projEnc(cwd string) string {
 // projDir is Claude Code's transcript directory for a cwd.
 func projDir(cwd string) string { return filepath.Join(projStore(), projEnc(cwd)) }
 
-// agentHasChat answers only when it is knowable.
-//
-// Clients own their transcript stores, and only Claude exposes a cheap
-// cwd → transcript-directory test. Codex and OpenCode keep private session
-// indexes, so their cwd-filtered pickers are the authority and scruff must not
-// guess on their behalf — "unknown" is the honest answer, and the caller
-// degrades to opening the picker.
+// agentHasChat answers only when it is knowable (agentProbeable). For every
+// other client scruff must not guess on its behalf — "unknown" is the honest
+// answer, and the caller degrades to opening the picker.
 func agentHasChat(agent, cwd string) bool {
 	if !agentProbeable(agent) {
 		return false
