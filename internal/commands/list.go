@@ -77,7 +77,7 @@ func (e *Env) rows() []listRow {
 		state := string(entry.State)
 		n, pr, diverged := e.postMergeAhead(entry.Main, entry.Branch)
 		row := listRow{
-			Repo:  entry.Main, // → its cell below, once the whole table is known
+			Repo:  entry.Main,
 			Name:  entry.Name(),
 			State: state,
 			Entry: entry,
@@ -97,16 +97,12 @@ func (e *Env) rows() []listRow {
 		// commits yet) — say so rather than printing a blank cell that reads
 		// like a broken row.
 		//
-		// The subject alone, NOT git's relative date (`%cr`, "3 minutes
-		// ago"): this value is also `--json`'s `last_commit` (json.go), a
-		// frozen contract two spellings of the same listing must answer
-		// byte-identically (SPEC.md §2.2) and `watch` diffs verbatim to
-		// decide whether a lane actually changed (watch.go's `changed`
-		// kind). A relative date drifts every second on its own, which
-		// broke both: two `scruff --json` calls a heartbeat apart could
-		// legitimately disagree, and a `watch` consumer would see a
-		// `changed` event on every rescan tick even when nothing about the
-		// lane had moved.
+		// The subject alone, NOT git's relative date (`%cr`): this is also
+		// `--json`'s `last_commit` (json.go), a frozen contract (SPEC.md §2.2)
+		// that `watch` diffs verbatim for its `changed` kind. A relative date
+		// drifts every second on its own, so two `--json` calls a heartbeat
+		// apart would disagree and every rescan tick would emit a `changed`
+		// for a lane that never moved.
 		last, err := gitx.Run(entry.Main, "log", "-1", "--format=%s", entry.Branch)
 		if err != nil || last == "" {
 			last = "no commits yet"
@@ -375,8 +371,7 @@ func mergeRef(main, base string) string {
 
 // openMapLookup is mergedMapLookup's other half: the tip and number of this
 // branch's OPEN PR, if it has one. Same one-query-per-repo shape, for the same
-// reason — the listing asks this of every row, and a per-branch query costs
-// ~0.5 s each.
+// reason.
 //
 // Deliberately NOT gated by `ownsPR`. An open PR's head ref is this branch's
 // name, so a push from this lane lands on that very PR — it covers this lane's
@@ -450,11 +445,9 @@ func (e *Env) mergedMapLookup(main, branch string) (headOID string, pr int) {
 		if name != branch {
 			continue
 		}
-		// `closedAt` is the newest field on this line, so it is the one a cache
-		// written by the PREVIOUS scruff does not carry. Reading it only when
-		// it is there leaves a 120 s-old cache merely uninformative rather than
-		// wrong: with no date the gate below cannot fire, which is exactly how
-		// this lookup behaved before it existed.
+		// `closedAt` is the newest field on this line, so a 120 s cache written
+		// by an older scruff lacks it. With no date the gate below cannot fire,
+		// which leaves that cache uninformative rather than wrong.
 		closedAt := ""
 		if len(f) > 3 {
 			closedAt = f[3]

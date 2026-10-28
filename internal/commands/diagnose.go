@@ -16,9 +16,8 @@ import (
 	"github.com/hausfold/scruff/internal/ui"
 )
 
-// The DIAGNOSE half of `scruff doctor` (SPEC.md §6.4). The other half — propose
-// a `.scruff.toml` and `--write` it — is 0.2 work and waits on a per-repo config
-// layer that does not exist yet; see doctor.go's dispatch for the refusal.
+// The DIAGNOSE half of `scruff doctor` (SPEC.md §6.4). The other half, `--write`,
+// is refused in doctor.go's dispatch, which says why.
 //
 // Three properties shape everything below.
 //
@@ -819,7 +818,7 @@ func treeBytes(root string) (int64, error) {
 
 // ── rendering ────────────────────────────────────────────────────────────────
 
-const diagLabel = 17 // the widest label below, plus a space
+const diagLabel = 17 // the widest label below (`sparse-checkout`), plus two spaces
 
 // plural is the difference between a report and a form letter. "1 lane(s)" is
 // the tell that nobody read the output before shipping it, and this one is

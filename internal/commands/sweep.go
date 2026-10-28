@@ -73,10 +73,9 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 		// parked-only rather than guess.
 		mode = sweepParked
 		res.Degraded = true
-		// "No provider vouched for absence", which on a developer machine means
-		// no lsof. Leases alone never reach this branch: they assert presence
-		// only, so a lane nobody leased is still an open question. An embedder
-		// that owns every session it serves says so with SCRUFF_OCCUPANCY=lease.
+		// Leases alone land here by default: they assert presence, never
+		// absence, unless SCRUFF_OCCUPANCY=lease says the embedder owns every
+		// session (occupancy.go's header).
 		e.Warn("no lsof — can't tell which checkouts have a pane open, so only PARKED lanes were swept (an embedder that owns every session can answer with SCRUFF_OCCUPANCY=lease)")
 	}
 	selfTop, _ := gitx.Toplevel(e.Cwd)
@@ -116,13 +115,12 @@ func (e *Env) reapSweep(mode sweepMode) SweepResult {
 				continue
 			}
 			if dirt != "" {
-				// Say so. Every other refusal in this loop leaves a note, and
-				// this one used to `continue` in silence — so a landed,
-				// unoccupied lane held back by one stray untracked file read as
-				// a lane scruff had simply forgotten, with the summary line's
-				// "unmerged, dirty, or in use" left to guess between.
+				// Say so, like every other refusal in this loop: a silent one
+				// leaves a landed, unoccupied lane held back by one stray
+				// untracked file reading as a lane scruff forgot, with the
+				// summary's "unmerged, dirty, or in use" left to guess between.
 				res.Dirty = append(res.Dirty, dirtyNote(entry, dirt))
-				continue // uncommitted work — leave it for a human
+				continue
 			}
 			if !e.Landed(entry.Main, entry.Branch).Landed {
 				e.noteRelanded(&res, entry)
